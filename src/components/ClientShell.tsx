@@ -11,7 +11,7 @@ interface ClientShellProps {
   canvas3d?: boolean;
 }
 
-export function ClientShell({ children, canvas3d = true }: ClientShellProps) {
+export function ClientShell({ children, canvas3d = false }: ClientShellProps) {
   return (
     <>
       <TransitionController />

@@ -4,11 +4,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "group-d-system",
+    default: "photobooth — group dynamics",
     template: "%s",
   },
-  description:
-    "Group Dynamics design system starter — minimal Next.js + GSAP + R3F template.",
+  description: "Group Dynamics photobooth — Salt Lake City, UT.",
 };
 
 export default function RootLayout({

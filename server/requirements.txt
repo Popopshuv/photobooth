@@ -1,0 +1,5 @@
+flask>=3.0
+flask-cors>=4.0
+# picamera2 is NOT pip-installable on Raspberry Pi OS. Install it via apt:
+#   sudo apt install -y python3-picamera2 python3-libcamera
+# Then create a venv with --system-site-packages so this script can import it.
