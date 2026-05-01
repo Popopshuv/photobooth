@@ -7,7 +7,6 @@ import { captureUrl } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 import { Stage } from "./Stage";
 import { Countdown } from "./Countdown";
-import { ShutterButton } from "./ShutterButton";
 import { ReceiptPreview } from "./ReceiptPreview";
 
 type Phase =
@@ -159,9 +158,9 @@ export function PhotoboothContent() {
 
         <footer
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto 1fr",
-            alignItems: "end",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
             gap: "1rem",
           }}
         >
@@ -179,27 +178,30 @@ export function PhotoboothContent() {
             salt lake city, ut 84105
           </RevealText>
 
-          <div style={{ pointerEvents: "auto" }}>
-            <ShutterButton
-              onPress={startCountdown}
-              disabled={phase !== "idle"}
-            />
-          </div>
-
-          <RevealText
-            as="span"
-            triggerOnScroll={false}
-            delay={0.5}
+          <button
+            type="button"
+            onClick={startCountdown}
+            disabled={phase !== "idle"}
+            aria-label="Take photo"
+            className="hover:opacity-50 transition-opacity"
             style={{
+              appearance: "none",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              fontFamily: "var(--font-abc)",
               fontSize: "var(--text-xs)",
               letterSpacing: "0.3em",
               textTransform: "uppercase",
               textAlign: "right",
+              color: "var(--white)",
               mixBlendMode: "difference",
+              cursor: phase === "idle" ? "pointer" : "default",
+              pointerEvents: "auto",
             }}
           >
-            press to capture
-          </RevealText>
+            [ press to capture ]
+          </button>
         </footer>
       </div>
 
