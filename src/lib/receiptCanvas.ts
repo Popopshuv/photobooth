@@ -5,8 +5,10 @@ interface ComposeOptions {
   photo: HTMLImageElement;
   /** Output canvas width in CSS pixels. Defaults to `RECEIPT.widthPx`. */
   width?: number;
-  /** Side padding as a fraction of width. Defaults to `RECEIPT.padPct`. */
+  /** Side padding for the photo / rules. Defaults to `RECEIPT.padPct`. */
   padPct?: number;
+  /** Extra-wide side padding for text. Defaults to `RECEIPT.textPadPct`. */
+  textPadPct?: number;
 }
 
 /**
@@ -22,10 +24,15 @@ export async function composeReceipt({
   photo,
   width = RECEIPT.widthPx,
   padPct = RECEIPT.padPct,
+  textPadPct = RECEIPT.textPadPct,
 }: ComposeOptions): Promise<HTMLCanvasElement> {
-  await document.fonts.ready;
-
   const pad = Math.round(width * padPct);
+  const textPad = Math.round(width * textPadPct);
+  // Generous top + bottom quiet zones — printers clip vertical edges too,
+  // and on continuous label stock the cut isn't always exactly where CUPS
+  // expects. Extra whitespace gets eaten harmlessly.
+  const topQuiet = Math.round(pad * 2);
+  const bottomQuiet = Math.round(pad * 2);
   const photoW = width - pad * 2;
   const photoH = Math.round((photoW * photo.naturalHeight) / photo.naturalWidth);
 
@@ -33,8 +40,17 @@ export async function composeReceipt({
   const bodySize = Math.round(width * 0.026);
   const bodyLineH = Math.round(bodySize * 1.7);
 
-  // Header height: padding + brand line + small gap + rule
-  const headerH = pad + brandSize + Math.round(pad * 0.6) + 1;
+  // Force the webfont to load for the exact sizes we'll draw with. Canvas
+  // silently falls back to plain monospace if the font face isn't loaded
+  // yet for that specific (weight, size) tuple.
+  await Promise.all([
+    document.fonts.load(`300 ${brandSize}px "ABCMonumentGrotesk"`),
+    document.fonts.load(`300 ${bodySize}px "ABCMonumentGrotesk"`),
+  ]);
+  await document.fonts.ready;
+
+  // Header height: top quiet zone + brand line + small gap + rule
+  const headerH = topQuiet + brandSize + Math.round(pad * 0.6) + 1;
   const ruleGap = Math.round(pad * 0.5);
 
   // Build the dynamic receipt block with date stamp
@@ -54,7 +70,7 @@ export async function composeReceipt({
   ];
 
   const bodyH = lines.length * bodyLineH;
-  const footerH = pad + 1 + ruleGap + bodyH + pad;
+  const footerH = pad + 1 + ruleGap + bodyH + bottomQuiet;
 
   const height = headerH + ruleGap + photoH + ruleGap + 1 + footerH;
 
@@ -77,9 +93,11 @@ export async function composeReceipt({
   ctx.textBaseline = "alphabetic";
 
   // Brand wordmark — sentence-case, left-aligned with the rest of the body.
+  // Uses textPad so it has more breathing room from the right edge than the
+  // image; printers (especially label printers) clip text more obviously.
   ctx.font = `300 ${brandSize}px "ABCMonumentGrotesk", monospace`;
   ctx.textAlign = "left";
-  ctx.fillText(RECEIPT.brand, pad, pad + brandSize);
+  ctx.fillText(RECEIPT.brand, textPad, topQuiet + brandSize);
 
   // Rule under header
   let y = headerH;
@@ -94,12 +112,12 @@ export async function composeReceipt({
   ctx.fillRect(pad, y, width - pad * 2, 1);
   y += 1 + ruleGap;
 
-  // Receipt body — uppercase, left aligned, monospace
+  // Receipt body — uppercase, left aligned, monospace.
   ctx.font = `300 ${bodySize}px "ABCMonumentGrotesk", monospace`;
   ctx.textAlign = "left";
   for (const line of lines) {
     y += bodyLineH;
-    ctx.fillText(line, pad, y);
+    ctx.fillText(line, textPad, y);
   }
 
   return canvas;

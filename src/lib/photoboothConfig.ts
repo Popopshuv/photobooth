@@ -31,20 +31,34 @@ export const RECEIPT = {
    */
   widthPx: 800,
   /**
-   * Side padding as a fraction of width. Doubles as a "safe zone" — most
-   * printers (especially label printers like the Brother VC-500W) have a
-   * hardware unprintable margin and `lp -o fit-to-page` doesn't account for
-   * it, so we build the buffer into the canvas itself. 0.12 ≈ 12% per side
-   * survives the typical 3-4mm edge clip.
+   * Side padding as a fraction of width — used by the photo and rules.
+   * Doubles as a "safe zone" against printer edge-clipping. 0.12 ≈ 12% per
+   * side survives the typical 3-4mm hardware unprintable margin that
+   * `lp -o fit-to-page` doesn't account for.
    */
   padPct: 0.12,
+  /**
+   * Extra-wide padding for text (brand wordmark + body lines). Letters are
+   * unforgiving when clipped — even one character chopped on the right
+   * looks broken — so we inset text further than the photo.
+   */
+  textPadPct: 0.18,
+  /**
+   * Physical print width in millimeters. Used to tell CUPS the exact custom
+   * media size (`Custom.<W>x<H>mm`) so it doesn't fit-to-page and clip the
+   * bottom of the receipt. Set to your stock width:
+   *   2" / Brother VC-500W ZINK  = 50.8
+   *   80mm thermal receipt       = 80
+   *   58mm mini thermal          = 58
+   */
+  printWidthMm: 50.8,
   lines: [
     "GROUP DYNAMICS",
     "SALT LAKE CITY, UTAH 84105",
     "EST. 2026",
     "",
     "ITEM ............ 1x PORTRAIT",
-    "FORMAT .......... 4 x 6 RECEIPT",
+    "FORMAT .......... 2 x 4 RECEIPT",
     "",
     "THANK YOU FOR SITTING.",
   ],

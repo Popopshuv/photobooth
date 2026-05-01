@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
-import { printUrl } from "@/lib/photoboothConfig";
+import { printUrl, RECEIPT } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 
 type Status = "composing" | "ready" | "saving" | "saved" | "printing" | "printed" | "error";
@@ -22,6 +22,9 @@ interface ReceiptPreviewProps {
 export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const blobRef = useRef<Blob | null>(null);
+  // Canvas aspect (h / w) so we can tell CUPS the correct physical height —
+  // otherwise it fit-to-pages a fixed default and clips the bottom.
+  const aspectRef = useRef<number>(1);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("composing");
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +44,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         const canvas = await composeReceipt({ photo: img });
         if (cancelled) return;
 
+        aspectRef.current = canvas.height / canvas.width;
         const blob = await canvasToPng(canvas);
         if (cancelled) return;
 
@@ -103,7 +107,9 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
     if (!blob) return;
     setStatus("printing");
     try {
-      const res = await fetch(printUrl(), {
+      const wMm = RECEIPT.printWidthMm;
+      const hMm = +(wMm * aspectRef.current).toFixed(1);
+      const res = await fetch(`${printUrl()}?w_mm=${wMm}&h_mm=${hMm}`, {
         method: "POST",
         headers: { "Content-Type": "image/png" },
         body: blob,

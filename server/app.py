@@ -170,9 +170,17 @@ def print_image():
     cmd = ["lp"]
     if PRINTER:
         cmd += ["-d", PRINTER]
-    # `fit-to-page` so the receipt scales to the printable area regardless of
-    # what stock is loaded. Adjust per your printer if needed.
-    cmd += ["-o", "fit-to-page", path]
+
+    # If the client tells us the physical print size in mm, use a custom
+    # media size so CUPS doesn't fit-to-page (and clip) against whatever
+    # default stock is loaded. Otherwise fall back to fit-to-page.
+    w_mm = request.args.get("w_mm", type=float)
+    h_mm = request.args.get("h_mm", type=float)
+    if w_mm and h_mm:
+        cmd += ["-o", f"media=Custom.{w_mm:g}x{h_mm:g}mm"]
+    else:
+        cmd += ["-o", "fit-to-page"]
+    cmd += [path]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

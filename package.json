@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:all": "bash scripts/dev-all.sh",
+    "kiosk": "bash scripts/kiosk.sh",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
