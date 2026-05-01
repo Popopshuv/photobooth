@@ -5,6 +5,7 @@
   "description": "Group Dynamics design system starter — minimal Next.js + GSAP + R3F template with built-in motion primitives, transition state machine, and design tokens.",
   "scripts": {
     "dev": "next dev",
+    "dev:all": "bash scripts/dev-all.sh",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
