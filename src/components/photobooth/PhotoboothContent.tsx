@@ -124,7 +124,6 @@ export function PhotoboothContent() {
             justifyContent: "space-between",
             alignItems: "flex-start",
             gap: "1rem",
-            mixBlendMode: "difference",
           }}
         >
           <RevealText
@@ -135,6 +134,7 @@ export function PhotoboothContent() {
               fontSize: "var(--text-sm)",
               letterSpacing: "0.2em",
               textTransform: "uppercase",
+              mixBlendMode: "difference",
             }}
           >
             groupdynamics.net / photobooth
@@ -148,6 +148,7 @@ export function PhotoboothContent() {
               letterSpacing: "0.3em",
               textTransform: "uppercase",
               textAlign: "right",
+              mixBlendMode: "difference",
             }}
           >
             est. 2026
@@ -162,7 +163,6 @@ export function PhotoboothContent() {
             gridTemplateColumns: "1fr auto 1fr",
             alignItems: "end",
             gap: "1rem",
-            mixBlendMode: "difference",
           }}
         >
           <RevealText
@@ -173,6 +173,7 @@ export function PhotoboothContent() {
               fontSize: "var(--text-xs)",
               letterSpacing: "0.3em",
               textTransform: "uppercase",
+              mixBlendMode: "difference",
             }}
           >
             salt lake city, ut 84105
@@ -194,6 +195,7 @@ export function PhotoboothContent() {
               letterSpacing: "0.3em",
               textTransform: "uppercase",
               textAlign: "right",
+              mixBlendMode: "difference",
             }}
           >
             press to capture

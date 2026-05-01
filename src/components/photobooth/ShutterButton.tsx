@@ -39,8 +39,13 @@ export function ShutterButton({ onPress, disabled }: ShutterButtonProps) {
       className="hover:opacity-50 transition-opacity"
       style={{
         appearance: "none",
+        // Two rings — white outer, thin dark inner — so the button stays
+        // legible whether the camera is pointed at a bright or dark scene.
         border: "1px solid var(--white)",
-        background: "transparent",
+        boxShadow: "inset 0 0 0 1px rgba(26,26,26,0.55)",
+        background: "rgba(26,26,26,0.18)",
+        backdropFilter: "blur(4px)",
+        WebkitBackdropFilter: "blur(4px)",
         borderRadius: "9999px",
         width: "clamp(72px, 8vw, 96px)",
         height: "clamp(72px, 8vw, 96px)",

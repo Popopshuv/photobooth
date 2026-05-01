@@ -6,7 +6,7 @@ import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
 import { printUrl } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 
-type Status = "composing" | "ready" | "printing" | "printed" | "error";
+type Status = "composing" | "ready" | "saving" | "saved" | "printing" | "printed" | "error";
 
 interface ReceiptPreviewProps {
   /** The captured still as an object URL. */
@@ -14,16 +14,23 @@ interface ReceiptPreviewProps {
   onClose: () => void;
 }
 
+/**
+ * Renders the composed receipt as an `<img>` (no imperative DOM ops, so
+ * React's reconciliation never trips over a node it didn't render). The
+ * underlying PNG blob is reused for both SAVE (download) and PRINT.
+ */
 export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const slotRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const blobRef = useRef<Blob | null>(null);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("composing");
   const [error, setError] = useState<string | null>(null);
 
   // Compose the receipt as soon as we have a photo.
   useEffect(() => {
     let cancelled = false;
+    let createdUrl: string | null = null;
+
     const run = async () => {
       try {
         const img = new Image();
@@ -34,15 +41,12 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         const canvas = await composeReceipt({ photo: img, width: 800 });
         if (cancelled) return;
 
-        canvasRef.current = canvas;
-        canvas.style.width = "100%";
-        canvas.style.height = "auto";
-        canvas.style.display = "block";
-        const slot = slotRef.current;
-        if (slot) {
-          slot.innerHTML = "";
-          slot.appendChild(canvas);
-        }
+        const blob = await canvasToPng(canvas);
+        if (cancelled) return;
+
+        blobRef.current = blob;
+        createdUrl = URL.createObjectURL(blob);
+        setPreviewSrc(createdUrl);
         setStatus("ready");
       } catch (e) {
         if (cancelled) return;
@@ -51,8 +55,10 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
       }
     };
     run();
+
     return () => {
       cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [photoUrl]);
 
@@ -71,12 +77,32 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
     );
   }, []);
 
+  const filename = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+    return `groupdynamics-${stamp}.png`;
+  };
+
+  const handleSave = () => {
+    const blob = blobRef.current;
+    if (!blob) return;
+    setStatus("saving");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus("saved");
+    window.setTimeout(() => setStatus("ready"), 1200);
+  };
+
   const handlePrint = async () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const blob = blobRef.current;
+    if (!blob) return;
     setStatus("printing");
     try {
-      const blob = await canvasToPng(canvas);
       const res = await fetch(printUrl(), {
         method: "POST",
         headers: { "Content-Type": "image/png" },
@@ -93,6 +119,8 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
       setStatus("error");
     }
   };
+
+  const busy = status === "saving" || status === "printing";
 
   return (
     <div
@@ -115,7 +143,6 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
       }}
     >
       <div
-        ref={slotRef}
         style={{
           maxHeight: "70vh",
           maxWidth: "min(420px, 100%)",
@@ -123,13 +150,21 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
           boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
           overflowY: "auto",
           overflowX: "hidden",
-          // Scale the canvas down to fit the slot.
-          // The actual <canvas> is appended in the effect.
           display: "grid",
           placeItems: "center",
+          minHeight: "8rem",
+          minWidth: "min(320px, 100%)",
         }}
       >
-        {status === "composing" && (
+        {previewSrc ? (
+          // The composed receipt — derived from the same blob we'll print/save.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewSrc}
+            alt="receipt preview"
+            style={{ display: "block", width: "100%", height: "auto" }}
+          />
+        ) : (
           <div
             style={{
               padding: "3rem",
@@ -139,7 +174,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
               color: "var(--gray-3)",
             }}
           >
-            composing…
+            {status === "error" ? "compose failed" : "composing…"}
           </div>
         )}
       </div>
@@ -158,11 +193,21 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         <button
           type="button"
           onClick={onClose}
-          disabled={status === "printing"}
+          disabled={busy}
           className="hover:opacity-50 transition-opacity"
           style={buttonStyle()}
         >
           retake
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={status !== "ready" && status !== "saved"}
+          className="hover:opacity-50 transition-opacity"
+          style={buttonStyle()}
+        >
+          {status === "saving" ? "saving…" : status === "saved" ? "saved" : "save"}
         </button>
 
         <button
