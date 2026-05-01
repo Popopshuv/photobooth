@@ -38,7 +38,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         img.src = photoUrl;
         await img.decode();
 
-        const canvas = await composeReceipt({ photo: img, width: 800 });
+        const canvas = await composeReceipt({ photo: img });
         if (cancelled) return;
 
         const blob = await canvasToPng(canvas);

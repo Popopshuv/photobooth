@@ -3,8 +3,10 @@ import { RECEIPT } from "./photoboothConfig";
 interface ComposeOptions {
   /** The captured photo (already decoded). */
   photo: HTMLImageElement;
-  /** Output canvas width in CSS pixels. Default 800 (works at any DPI). */
+  /** Output canvas width in CSS pixels. Defaults to `RECEIPT.widthPx`. */
   width?: number;
+  /** Side padding as a fraction of width. Defaults to `RECEIPT.padPct`. */
+  padPct?: number;
 }
 
 /**
@@ -13,15 +15,17 @@ interface ComposeOptions {
  * can preview and convert to a Blob.
  *
  * Layout is monospaced and proportional to `width` so the same code prints
- * crisply on a thermal receipt printer (576px) or an inkjet (1200px+).
+ * crisply on a thermal receipt printer (576px) or an inkjet (1200px+). The
+ * `padPct` is also the safe-zone against printer edge-clipping.
  */
 export async function composeReceipt({
   photo,
-  width = 800,
+  width = RECEIPT.widthPx,
+  padPct = RECEIPT.padPct,
 }: ComposeOptions): Promise<HTMLCanvasElement> {
   await document.fonts.ready;
 
-  const pad = Math.round(width * 0.06);
+  const pad = Math.round(width * padPct);
   const photoW = width - pad * 2;
   const photoH = Math.round((photoW * photo.naturalHeight) / photo.naturalWidth);
 
@@ -72,10 +76,10 @@ export async function composeReceipt({
   ctx.fillStyle = "#1a1a1a";
   ctx.textBaseline = "alphabetic";
 
-  // Brand wordmark — sentence-case, centered
+  // Brand wordmark — sentence-case, left-aligned with the rest of the body.
   ctx.font = `300 ${brandSize}px "ABCMonumentGrotesk", monospace`;
-  ctx.textAlign = "center";
-  ctx.fillText(RECEIPT.brand, width / 2, pad + brandSize);
+  ctx.textAlign = "left";
+  ctx.fillText(RECEIPT.brand, pad, pad + brandSize);
 
   // Rule under header
   let y = headerH;

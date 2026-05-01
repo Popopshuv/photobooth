@@ -22,9 +22,22 @@ export const streamUrl = () => `${getPiBaseUrl()}/stream`;
 export const captureUrl = () => `${getPiBaseUrl()}/capture`;
 export const printUrl = () => `${getPiBaseUrl()}/print`;
 
-/** Receipt copy. Adjust per shoot — no env var so the values are reviewable. */
+/** Receipt copy + print geometry. Adjust per shoot. */
 export const RECEIPT = {
   brand: "groupdynamics.net",
+  /**
+   * Output canvas width in CSS pixels. The receipt scales proportionally
+   * from this. Bump up for larger paper, down for narrow label/thermal stock.
+   */
+  widthPx: 800,
+  /**
+   * Side padding as a fraction of width. Doubles as a "safe zone" — most
+   * printers (especially label printers like the Brother VC-500W) have a
+   * hardware unprintable margin and `lp -o fit-to-page` doesn't account for
+   * it, so we build the buffer into the canvas itself. 0.12 ≈ 12% per side
+   * survives the typical 3-4mm edge clip.
+   */
+  padPct: 0.12,
   lines: [
     "GROUP DYNAMICS",
     "SALT LAKE CITY, UTAH 84105",
