@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
-import { PRINT_URL } from "@/lib/photoboothConfig";
+import { printUrl } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 
 type Status = "composing" | "ready" | "printing" | "printed" | "error";
@@ -77,7 +77,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
     setStatus("printing");
     try {
       const blob = await canvasToPng(canvas);
-      const res = await fetch(PRINT_URL, {
+      const res = await fetch(printUrl(), {
         method: "POST",
         headers: { "Content-Type": "image/png" },
         body: blob,

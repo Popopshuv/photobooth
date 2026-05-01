@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { STREAM_URL } from "@/lib/photoboothConfig";
+import { streamUrl } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 
 interface StageProps {
@@ -19,6 +19,16 @@ interface StageProps {
 export function Stage({ flash, onFlashDone }: StageProps) {
   const flashRef = useRef<HTMLDivElement>(null);
   const [streamFailed, setStreamFailed] = useState(false);
+  // The stream URL depends on `window.location` so it must be resolved on the
+  // client. Stay null during SSR / first render to avoid hydration mismatch.
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    // setSrc-in-effect is the correct pattern here — the value depends on
+    // `window.location` which doesn't exist during SSR.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSrc(streamUrl());
+  }, []);
 
   useEffect(() => {
     if (!flash) return;
@@ -47,11 +57,11 @@ export function Stage({ flash, onFlashDone }: StageProps) {
         zIndex: 0,
       }}
     >
-      {!streamFailed ? (
+      {src && !streamFailed && (
         // next/image can't consume an MJPEG multipart stream, so a raw <img> is required here.
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={STREAM_URL}
+          src={src}
           alt=""
           onError={() => setStreamFailed(true)}
           style={{
@@ -62,7 +72,8 @@ export function Stage({ flash, onFlashDone }: StageProps) {
             objectFit: "cover",
           }}
         />
-      ) : (
+      )}
+      {streamFailed && (
         <div
           style={{
             position: "absolute",
@@ -77,7 +88,7 @@ export function Stage({ flash, onFlashDone }: StageProps) {
             textAlign: "center",
           }}
         >
-          camera offline — check pi server at {STREAM_URL}
+          camera offline — check pi server at {src}
         </div>
       )}
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { RevealText } from "@/components/RevealText";
-import { CAPTURE_URL } from "@/lib/photoboothConfig";
+import { captureUrl } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 import { Stage } from "./Stage";
 import { Countdown } from "./Countdown";
@@ -72,7 +72,7 @@ export function PhotoboothContent() {
     // Kick off the actual capture during the flash. Whichever finishes last
     // gates the transition to "preview".
     try {
-      const res = await fetch(CAPTURE_URL, { cache: "no-store" });
+      const res = await fetch(captureUrl(), { cache: "no-store" });
       if (!res.ok) throw new Error(`capture failed (${res.status})`);
       const blob = await res.blob();
       pendingPhotoRef.current = URL.createObjectURL(blob);
