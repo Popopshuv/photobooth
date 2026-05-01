@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "ABCMonumentGrotesk";
+  src:
+    url("/fonts/ABCMonumentGroteskMono-Light.woff2") format("woff2"),
+    url("/fonts/ABCMonumentGroteskMono-Light.woff") format("woff");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Fluid root — every rem in the system scales with viewport */
+  font-size: clamp(12px, 1.5vw + 8px, 16px);
+
+  /* Colors */
+  --white: #ffffff;
+  --black: #1a1a1a;       /* near-black, not #000 */
+  --gray-1: #f1f1f1;      /* subtle dividers, hover bgs */
+  --gray-2: #e7e6e6;      /* mid neutrals */
+  --gray-3: #bfb5af;      /* deeper neutral, captions */
+  --red:    #ff0000;      /* the only saturated colour — use sparingly */
+
+  /* Spacing */
+  --page-pad: clamp(1rem, 3vw, 2.5rem);
+
+  /* Font */
+  --font-abc: "ABCMonumentGrotesk", system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--white);
+  --color-foreground: var(--black);
+  --text-reg: 0.6875rem;   /* body, headings, primary */
+  --text-tiny: 0.625rem;   /* secondary */
+  --text-sm: 0.5625rem;    /* nav, labels */
+  --text-xs: 0.5rem;       /* eyebrow micro-labels */
+}
+
+body {
+  background: var(--white);
+  color: var(--black);
+  font-family: var(--font-abc);
+  font-weight: 300;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--black);
+  color: var(--white);
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+.word,
+.char,
+.line {
+  display: inline-block;
+}
+
+.split-text {
+  font-kerning: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
