@@ -66,18 +66,18 @@ export const RECEIPT = {
    * paper out before tearing or the content gets sliced off. Bump if your
    * tear bar is further above the print head; drop to save paper.
    */
-  tearOffMm: 50,
+  tearOffMm: 150,
   /**
    * Visible gap between body rows on the printed page, in millimeters.
    * Independent of font size so spacing reads consistently regardless
    * of text scale tweaks.
    */
-  bodyGapMm: 10,
+  bodyGapMm: 50,
   /**
    * Vertical breathing room (mm) above AND below the photo. Adds whitespace
    * between the header rule and the photo, and the photo and the body rule.
    */
-  photoMarginMm: 15,
+  photoMarginMm: 100,
   /**
    * Gamma applied to the captured photo before composing onto the receipt.
    * Thermal printers threshold at ~50% gray, so anything mid-tone or darker
