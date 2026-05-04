@@ -306,18 +306,51 @@ def print_image():
         fh.write(data)
         path = fh.name
 
-    # Mirror the exact bytes we're about to hand `lp` to a human-readable
-    # location so the dev can open it and verify the receipt is composed
-    # correctly. Mirrors AFTER the DPI stamp above so the saved file is
-    # byte-identical to what CUPS sees.
+    # Convert to a single-page PDF whose page size matches the image's
+    # exact physical dimensions. PDFs carry their geometry inside the
+    # document, so CUPS's pdftoraster filter respects them precisely —
+    # this bypasses the image-filter chain that's been silently fitting
+    # our tall canvases into a fixed page size. PNG remains the fallback
+    # if conversion fails for any reason.
+    w_mm = request.args.get("w_mm", type=float)
+    h_mm = request.args.get("h_mm", type=float)
+    print_path = path
+    pdf_path: Optional[str] = None
+    try:
+        if w_mm and h_mm and img_w and img_h:
+            pdf_path = path.replace(suffix, ".pdf")
+            # Pillow's PDF save scales the image to W×H inches where
+            # W = image_width_px / resolution. Set resolution so the
+            # resulting page is exactly w_mm × h_mm in size.
+            target_dpi = img_w / (w_mm / 25.4)
+            img_meta.save(pdf_path, format="PDF", resolution=target_dpi)
+            print_path = pdf_path
+            print(
+                f"[print] converted to PDF ({w_mm:g}x{h_mm:g}mm @ "
+                f"{target_dpi:.1f}dpi): {pdf_path}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[print] PDF conversion failed, using PNG: {exc}", flush=True)
+
+    # Mirror the file we're handing CUPS to a human-readable location so
+    # the dev can open it and verify what we asked the printer to render.
+    # Save BOTH the PDF (what's actually being printed) and the PNG (easier
+    # to view in image viewers) when possible.
     if PRINT_SAVE_DIR:
         try:
             os.makedirs(PRINT_SAVE_DIR, exist_ok=True)
             ts = time.strftime("%Y%m%d-%H%M%S")
-            mirror_path = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}{suffix}")
-            with open(mirror_path, "wb") as fh:
+            png_mirror = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}.png")
+            with open(png_mirror, "wb") as fh:
                 fh.write(data)
-            print(f"[print] saved a copy to {mirror_path}", flush=True)
+            print(f"[print] saved PNG copy to {png_mirror}", flush=True)
+            if pdf_path and os.path.exists(pdf_path):
+                pdf_mirror = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}.pdf")
+                with open(pdf_mirror, "wb") as fh:
+                    with open(pdf_path, "rb") as src:
+                        fh.write(src.read())
+                print(f"[print] saved PDF copy to {pdf_mirror}", flush=True)
         except Exception as exc:
             print(f"[print] could not save copy: {exc}", flush=True)
 
@@ -325,16 +358,8 @@ def print_image():
     if PRINTER:
         cmd += ["-d", PRINTER]
 
-    # Page rectangle = exactly the dimensions of our composed image, in
-    # millimeters. Combined with `fitplot=false` and `ppi=203`, this gives
-    # CUPS unambiguous instructions: page is W×H mm, the bitmap is at 203
-    # DPI (which makes its natural size also W×H mm), so render it 1:1.
-    # `PRINT_PAGESIZE` (env var, default `X48Y3276`) is only used if the
-    # client doesn't supply per-job dimensions — it's the conservative
-    # "infinite roll" fallback. We still send it as `media=` so CUPS sees
-    # both the PageSize geometry and the media tag.
-    w_mm = request.args.get("w_mm", type=float)
-    h_mm = request.args.get("h_mm", type=float)
+    # We're sending PDF (or PNG fallback) — page geometry is in the file
+    # itself for PDFs, so the per-job options here are belt-and-braces.
     if w_mm and h_mm:
         cmd += [
             "-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm",
@@ -346,7 +371,7 @@ def print_image():
         "-o", "ppi=203",
         "-o", "natural-scaling=100",
         "-o", "fitplot=false",
-        path,
+        print_path,
     ]
 
     print(f"[print] {' '.join(cmd)}", flush=True)
