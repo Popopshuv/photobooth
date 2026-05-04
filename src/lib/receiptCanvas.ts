@@ -19,6 +19,43 @@ function photoDims(src: PhotoSource): { w: number; h: number } {
 }
 
 /**
+ * Apply gamma correction to the captured photo so mid-tones and shadows
+ * survive the printer's hard 50% threshold. Without this, anything darker
+ * than mid-gray (hair, clothing, shadows) prints as one solid black blob.
+ *
+ * Returns a fresh canvas — the original source is left alone so callers
+ * who hold onto the photo elsewhere don't see their image mutate.
+ */
+function liftPhotoExposure(
+  photo: PhotoSource,
+  gamma: number,
+): HTMLCanvasElement {
+  const dims = photoDims(photo);
+  const c = document.createElement("canvas");
+  c.width = dims.w;
+  c.height = dims.h;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("liftPhotoExposure: 2D context unavailable");
+  ctx.drawImage(photo, 0, 0);
+
+  const img = ctx.getImageData(0, 0, dims.w, dims.h);
+  const data = img.data;
+  // 256-entry LUT so we don't pay Math.pow per pixel.
+  const inv = 1 / gamma;
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) {
+    lut[i] = Math.round(255 * Math.pow(i / 255, inv));
+  }
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = lut[data[i]];
+    data[i + 1] = lut[data[i + 1]];
+    data[i + 2] = lut[data[i + 2]];
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+/**
  * Compose the printable receipt: brand wordmark on top, the photo, a printed
  * "ticket" block underneath. Returns a freshly drawn canvas that the caller
  * can preview and convert to a Blob.
@@ -44,10 +81,11 @@ export async function composeReceipt({
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
 
-  const brandSize = Math.round(width * 0.05);
-  // Bumped from 0.026 — at 0.026 × 58mm ≈ 1.5mm tall, the thermal head
-  // dropped strokes on the lighter monospace weight. 0.034 ≈ 2.0mm.
-  const bodySize = Math.round(width * 0.034);
+  const brandSize = Math.round(width * 0.06);
+  // ABC Mono Light's thin strokes drop out on thermal at small sizes — each
+  // stroke needs at least ~2 dots to print cleanly. 0.045 × 58mm ≈ 2.6mm
+  // tall (~21 dots at 8 dots/mm), which gives the strokes enough mass.
+  const bodySize = Math.round(width * 0.045);
   const bodyLineH = Math.round(bodySize * 1.6);
 
   // Force the webfont to load for the exact sizes we'll draw with. Canvas
@@ -113,9 +151,10 @@ export async function composeReceipt({
   let y = headerH;
   ctx.fillRect(pad, y, width - pad * 2, 1);
 
-  // Photo
+  // Photo — gamma-lifted so mid-tones survive the printer's hard threshold.
+  const liftedPhoto = liftPhotoExposure(photo, RECEIPT.photoGamma);
   y += ruleGap;
-  ctx.drawImage(photo, pad, y, photoW, photoH);
+  ctx.drawImage(liftedPhoto, pad, y, photoW, photoH);
   y += photoH + ruleGap;
 
   // Rule above receipt body

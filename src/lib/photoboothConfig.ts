@@ -59,6 +59,15 @@ export const RECEIPT = {
    * gets printed (no resampling step inside CUPS).
    */
   printDotsPerMm: 8,
+  /**
+   * Gamma applied to the captured photo before composing onto the receipt.
+   * Thermal printers threshold at ~50% gray, so anything mid-tone or darker
+   * collapses to pure black on print — a normal portrait turns into a
+   * silhouette. Values >1 lift mid-tones and shadows. 1.8 ≈ "lift one stop";
+   * push to 2.2 if the print is still mostly black, drop to 1.4 if highlights
+   * are blowing out.
+   */
+  photoGamma: 1.8,
   lines: [
     "GROUP DYNAMICS",
     "SALT LAKE CITY, UTAH 84105",
