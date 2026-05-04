@@ -5,8 +5,9 @@ import gsap from "gsap";
 import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
 import { printUrl, RECEIPT } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
+import { removeBackgroundToWhite } from "@/lib/backgroundRemoval";
 
-type Status = "composing" | "ready" | "saving" | "saved" | "printing" | "printed" | "error";
+type Status = "segmenting" | "composing" | "ready" | "printing" | "printed" | "error";
 
 interface ReceiptPreviewProps {
   /** The captured still as an object URL. */
@@ -17,7 +18,7 @@ interface ReceiptPreviewProps {
 /**
  * Renders the composed receipt as an `<img>` (no imperative DOM ops, so
  * React's reconciliation never trips over a node it didn't render). The
- * underlying PNG blob is reused for both SAVE (download) and PRINT.
+ * underlying PNG blob is what gets POSTed to the printer.
  */
 export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -26,7 +27,9 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
   // otherwise it fit-to-pages a fixed default and clips the bottom.
   const aspectRef = useRef<number>(1);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-  const [status, setStatus] = useState<Status>("composing");
+  const [status, setStatus] = useState<Status>(
+    RECEIPT.removeBackground ? "segmenting" : "composing",
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Compose the receipt as soon as we have a photo.
@@ -41,7 +44,21 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         img.src = photoUrl;
         await img.decode();
 
-        const canvas = await composeReceipt({ photo: img });
+        // Selfie segmentation first so the receipt composer sees a
+        // pre-masked photo. Failure here is non-fatal — fall back to the
+        // raw image so a model hiccup never blocks a print.
+        let photoSource: HTMLImageElement | HTMLCanvasElement = img;
+        if (RECEIPT.removeBackground) {
+          try {
+            photoSource = await removeBackgroundToWhite(img);
+          } catch (e) {
+            console.warn("background removal failed, using raw photo", e);
+          }
+          if (cancelled) return;
+        }
+
+        setStatus("composing");
+        const canvas = await composeReceipt({ photo: photoSource });
         if (cancelled) return;
 
         aspectRef.current = canvas.height / canvas.width;
@@ -81,27 +98,6 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
     );
   }, []);
 
-  const filename = () => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-    return `groupdynamics-${stamp}.png`;
-  };
-
-  const handleSave = () => {
-    const blob = blobRef.current;
-    if (!blob) return;
-    setStatus("saving");
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setStatus("saved");
-    window.setTimeout(() => setStatus("ready"), 1200);
-  };
-
   const handlePrint = async () => {
     const blob = blobRef.current;
     if (!blob) return;
@@ -126,7 +122,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
     }
   };
 
-  const busy = status === "saving" || status === "printing";
+  const busy = status === "printing";
 
   return (
     <div
@@ -180,7 +176,11 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
               color: "var(--gray-3)",
             }}
           >
-            {status === "error" ? "compose failed" : "composing…"}
+            {status === "error"
+              ? "compose failed"
+              : status === "segmenting"
+                ? "removing background…"
+                : "composing…"}
           </div>
         )}
       </div>
@@ -204,16 +204,6 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
           style={buttonStyle()}
         >
           retake
-        </button>
-
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={status !== "ready" && status !== "saved"}
-          className="hover:opacity-50 transition-opacity"
-          style={buttonStyle()}
-        >
-          {status === "saving" ? "saving…" : status === "saved" ? "saved" : "save"}
         </button>
 
         <button

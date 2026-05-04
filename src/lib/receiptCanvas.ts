@@ -1,14 +1,21 @@
 import { RECEIPT } from "./photoboothConfig";
 
+type PhotoSource = HTMLImageElement | HTMLCanvasElement;
+
 interface ComposeOptions {
-  /** The captured photo (already decoded). */
-  photo: HTMLImageElement;
+  /** The captured photo, either a decoded image or a pre-rendered canvas. */
+  photo: PhotoSource;
   /** Output canvas width in CSS pixels. Defaults to `RECEIPT.widthPx`. */
   width?: number;
   /** Side padding for the photo / rules. Defaults to `RECEIPT.padPct`. */
   padPct?: number;
   /** Extra-wide side padding for text. Defaults to `RECEIPT.textPadPct`. */
   textPadPct?: number;
+}
+
+function photoDims(src: PhotoSource): { w: number; h: number } {
+  if (src instanceof HTMLCanvasElement) return { w: src.width, h: src.height };
+  return { w: src.naturalWidth, h: src.naturalHeight };
 }
 
 /**
@@ -28,13 +35,14 @@ export async function composeReceipt({
 }: ComposeOptions): Promise<HTMLCanvasElement> {
   const pad = Math.round(width * padPct);
   const textPad = Math.round(width * textPadPct);
-  // Generous top + bottom quiet zones — printers clip vertical edges too,
-  // and on continuous label stock the cut isn't always exactly where CUPS
-  // expects. Extra whitespace gets eaten harmlessly.
-  const topQuiet = Math.round(pad * 2);
-  const bottomQuiet = Math.round(pad * 2);
+  // Modest top + bottom quiet zones. Thermal printers don't clip the
+  // leading/trailing edge the way label stock does, so we just need
+  // enough whitespace for the wordmark and footer to breathe.
+  const topQuiet = Math.round(width * 0.06);
+  const bottomQuiet = Math.round(width * 0.06);
   const photoW = width - pad * 2;
-  const photoH = Math.round((photoW * photo.naturalHeight) / photo.naturalWidth);
+  const dims = photoDims(photo);
+  const photoH = Math.round((photoW * dims.h) / dims.w);
 
   const brandSize = Math.round(width * 0.045);
   const bodySize = Math.round(width * 0.026);

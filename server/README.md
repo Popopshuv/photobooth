@@ -26,7 +26,16 @@ sudo usermod -a -G lp $USER
 # (CUPS web UI) to add it. Confirm with:
 lpstat -p
 lp /etc/hostname        # smoke test — should print one page
+
+# Make this printer the system default so the server can stay generic
+# (no PHOTOBOOTH_PRINTER env var needed). Replace QUEUE_NAME with the
+# name shown by `lpstat -p` (e.g. ZJ-58, POS58, etc):
+sudo lpadmin -d QUEUE_NAME
+lpstat -d                # should print "system default destination: QUEUE_NAME"
 ```
+
+> Once a CUPS default is set the systemd unit's `Environment=PHOTOBOOTH_PRINTER=…`
+> line is unnecessary — `lp` (no `-d`) routes to the default queue.
 
 ## Run the server
 
@@ -72,7 +81,8 @@ After=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/photobooth/server
-Environment=PHOTOBOOTH_PRINTER=YOUR_QUEUE_NAME
+# PHOTOBOOTH_PRINTER is only needed if you didn't run `sudo lpadmin -d`
+# above — otherwise `lp` uses the CUPS system default.
 ExecStart=/home/pi/photobooth/server/.venv/bin/python app.py
 Restart=on-failure
 

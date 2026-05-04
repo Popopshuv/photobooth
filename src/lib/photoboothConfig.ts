@@ -32,26 +32,32 @@ export const RECEIPT = {
   widthPx: 800,
   /**
    * Side padding as a fraction of width — used by the photo and rules.
-   * Doubles as a "safe zone" against printer edge-clipping. 0.12 ≈ 12% per
-   * side survives the typical 3-4mm hardware unprintable margin that
-   * `lp -o fit-to-page` doesn't account for.
+   * Thermal printers have ~0 unprintable margin (the head spans the full
+   * paper width), so this is purely visual breathing room, not a clip
+   * safety zone. Bump up if switching back to a label/inkjet printer.
    */
-  padPct: 0.12,
+  padPct: 0.04,
   /**
-   * Extra-wide padding for text (brand wordmark + body lines). Letters are
-   * unforgiving when clipped — even one character chopped on the right
-   * looks broken — so we inset text further than the photo.
+   * Extra-wide padding for text (brand wordmark + body lines). Slightly
+   * inset from the photo so characters don't hug the paper edge.
    */
-  textPadPct: 0.18,
+  textPadPct: 0.06,
   /**
    * Physical print width in millimeters. Used to tell CUPS the exact custom
    * media size (`Custom.<W>x<H>mm`) so it doesn't fit-to-page and clip the
    * bottom of the receipt. Set to your stock width:
-   *   2" / Brother VC-500W ZINK  = 50.8
-   *   80mm thermal receipt       = 80
    *   58mm mini thermal          = 58
+   *   80mm thermal receipt       = 80
+   *   2" / Brother VC-500W ZINK  = 50.8
    */
-  printWidthMm: 50.8,
+  printWidthMm: 58,
+  /**
+   * Run MediaPipe selfie segmentation on the captured still and composite
+   * the person onto a white background before printing. Looks much cleaner
+   * on 1-bit thermal stock than a noisy real-world background. Set false
+   * to skip (e.g. for testing on a non-Pi machine).
+   */
+  removeBackground: true,
   lines: [
     "GROUP DYNAMICS",
     "SALT LAKE CITY, UTAH 84105",
