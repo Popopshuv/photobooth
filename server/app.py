@@ -253,6 +253,20 @@ def print_image():
     ctype = request.headers.get("Content-Type", "image/png")
     suffix = ".png" if "png" in ctype else ".jpg"
 
+    # Sniff dimensions before handoff — the canvas-side spacing knobs are
+    # only useful if the actual pixel count is changing too. Mismatch
+    # between the PNG dimensions we receive and the printed receipt length
+    # means the driver is fit-to-page'ing.
+    try:
+        img_meta = Image.open(io.BytesIO(data))
+        img_w, img_h = img_meta.size
+        print(
+            f"[print] received {img_w}x{img_h}px {ctype} ({len(data)} bytes)",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"[print] could not read image dims: {exc}", flush=True)
+
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
         fh.write(data)
         path = fh.name
