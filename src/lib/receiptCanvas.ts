@@ -122,11 +122,11 @@ export async function composeReceipt({
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
 
-  const brandSize = Math.round(width * 0.13);
+  const brandSize = Math.round(width * 0.075);
   // ABC Mono Light's thin strokes need at least 3 thermal dots of width to
   // print solid; 0.06 × 58mm ≈ 3.5mm tall (~28 dots) keeps body strokes
   // above that floor instead of fading to dotted lines on the receipt.
-  const bodySize = Math.round(width * 0.1);
+  const bodySize = Math.round(width * 0.06);
   // Line height = text height + a fixed printed-mm gap. mm-based instead of
   // a font-size ratio so the visible space between rows doesn't drift when
   // text size is tuned. RECEIPT.bodyGapMm sets the actual paper gap.
