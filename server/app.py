@@ -292,14 +292,24 @@ def print_image():
     if PRINTER:
         cmd += ["-d", PRINTER]
 
-    # Use the PPD's "long roll" PageSize so the page geometry doesn't fight
-    # us — the printer feeds only the paper the image actually needs.
-    # `ppi=203` tells the image filter to interpret the PNG as a 203 DPI
-    # bitmap so the natural-size math lines up with the printer's print
-    # head. `natural-scaling=100` then prints the image at 100% of its
-    # natural physical size (no fit-to-page math at all).
+    # Page rectangle = exactly the dimensions of our composed image, in
+    # millimeters. Combined with `fitplot=false` and `ppi=203`, this gives
+    # CUPS unambiguous instructions: page is W×H mm, the bitmap is at 203
+    # DPI (which makes its natural size also W×H mm), so render it 1:1.
+    # `PRINT_PAGESIZE` (env var, default `X48Y3276`) is only used if the
+    # client doesn't supply per-job dimensions — it's the conservative
+    # "infinite roll" fallback. We still send it as `media=` so CUPS sees
+    # both the PageSize geometry and the media tag.
+    w_mm = request.args.get("w_mm", type=float)
+    h_mm = request.args.get("h_mm", type=float)
+    if w_mm and h_mm:
+        cmd += [
+            "-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm",
+            "-o", f"media=Custom.{w_mm:g}x{h_mm:g}mm",
+        ]
+    else:
+        cmd += ["-o", f"PageSize={PRINT_PAGESIZE}"]
     cmd += [
-        "-o", f"PageSize={PRINT_PAGESIZE}",
         "-o", "ppi=203",
         "-o", "natural-scaling=100",
         "-o", "fitplot=false",
