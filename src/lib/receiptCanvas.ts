@@ -121,11 +121,11 @@ export async function composeReceipt({
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
 
-  const brandSize = Math.round(width * 0.06);
-  // ABC Mono Light's thin strokes drop out on thermal at small sizes — each
-  // stroke needs at least ~2 dots to print cleanly. 0.045 × 58mm ≈ 2.6mm
-  // tall (~21 dots at 8 dots/mm), which gives the strokes enough mass.
-  const bodySize = Math.round(width * 0.045);
+  const brandSize = Math.round(width * 0.075);
+  // ABC Mono Light's thin strokes need at least 3 thermal dots of width to
+  // print solid; 0.06 × 58mm ≈ 3.5mm tall (~28 dots) keeps body strokes
+  // above that floor instead of fading to dotted lines on the receipt.
+  const bodySize = Math.round(width * 0.06);
   // Line height = text height + a fixed printed-mm gap. mm-based instead of
   // a font-size ratio so the visible space between rows doesn't drift when
   // text size is tuned. RECEIPT.bodyGapMm sets the actual paper gap.
@@ -143,6 +143,10 @@ export async function composeReceipt({
   // Header height: top quiet zone + brand line + small gap + rule
   const headerH = topQuiet + brandSize + Math.round(pad * 0.6) + 1;
   const ruleGap = Math.round(pad * 0.5);
+  // Vertical breathing room above and below the photo block — independent
+  // of the rule-to-rule gap so we can give the image proper room without
+  // ballooning the body section's own line spacing.
+  const photoMargin = mmToPx(RECEIPT.photoMarginMm);
 
   // Build the dynamic receipt block with date stamp
   const now = new Date();
@@ -164,7 +168,9 @@ export async function composeReceipt({
   const bodyH = lines.length * bodyLineH;
   const footerH = pad + 1 + ruleGap + bodyH + bottomQuiet;
 
-  const height = headerH + ruleGap + photoH + ruleGap + 1 + footerH;
+  // Header rule -> photoMargin -> photo -> photoMargin -> rule -> body
+  const height =
+    headerH + photoMargin + photoH + photoMargin + 1 + footerH;
 
   const canvas = document.createElement("canvas");
   // Render at 2x for print sharpness, then we'll downscale on POST if needed.
@@ -197,11 +203,12 @@ export async function composeReceipt({
 
   // Photo — gamma-lifted + Floyd–Steinberg dithered so mid-tones become
   // scattered dots instead of a solid black silhouette under the printer's
-  // hard 50% threshold.
+  // hard 50% threshold. `photoMargin` gives the image breathing room above
+  // and below; the rules sit at the edges of that breathing room.
   const processedPhoto = processPhotoForThermal(photo, RECEIPT.photoGamma);
-  y += ruleGap;
+  y += photoMargin;
   ctx.drawImage(processedPhoto, pad, y, photoW, photoH);
-  y += photoH + ruleGap;
+  y += photoH + photoMargin;
 
   // Rule above receipt body
   ctx.fillRect(pad, y, width - pad * 2, 1);
