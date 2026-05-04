@@ -6,6 +6,7 @@ import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
 import { printUrl, RECEIPT } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 import { removeBackgroundToWhite } from "@/lib/backgroundRemoval";
+import { Spinner } from "@/components/Spinner";
 
 type Status = "segmenting" | "composing" | "ready" | "printing" | "printed" | "error";
 
@@ -170,17 +171,15 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
           <div
             style={{
               padding: "3rem",
+              display: "grid",
+              placeItems: "center",
               fontSize: "var(--text-sm)",
               letterSpacing: "0.15em",
               textTransform: "uppercase",
               color: "var(--gray-3)",
             }}
           >
-            {status === "error"
-              ? "compose failed"
-              : status === "segmenting"
-                ? "removing background…"
-                : "composing…"}
+            {status === "error" ? "compose failed" : <Spinner />}
           </div>
         )}
       </div>

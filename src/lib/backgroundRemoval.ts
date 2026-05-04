@@ -35,7 +35,7 @@ async function getSegmenter(): Promise<ImageSegmenter> {
 /**
  * Returns a canvas of the same dimensions as the source image, with everything
  * outside the person silhouette painted pure white. Selfie segmenter category
- * mask: index 0 = person, non-zero = background.
+ * mask convention: 0 = background, 1 = person.
  *
  * Throws if the model can't load or segmentation fails — callers should
  * fail-soft and use the original photo so a single bad inference never blocks
@@ -62,6 +62,15 @@ export async function removeBackgroundToWhite(
   const maskData = mask.getAsUint8Array();
   result.close();
 
+  // Quick sanity log: surfaces "did the model actually segment anything"
+  // without forcing the user to read frame-by-frame in devtools.
+  let personPx = 0;
+  for (let i = 0; i < maskData.length; i++) if (maskData[i] !== 0) personPx++;
+  const ratio = personPx / maskData.length;
+  console.info(
+    `[bg-removal] mask ${mw}x${mh}, person coverage ${(ratio * 100).toFixed(1)}%`,
+  );
+
   const maskCanvas = document.createElement("canvas");
   maskCanvas.width = mw;
   maskCanvas.height = mh;
@@ -70,15 +79,16 @@ export async function removeBackgroundToWhite(
   const maskImage = maskCtx.createImageData(mw, mh);
   for (let i = 0; i < maskData.length; i++) {
     const pi = i * 4;
-    // Person pixels stay transparent (we'll paint photo through). Background
-    // pixels become opaque white.
+    // Background pixels (value 0) become opaque white, painting over the
+    // photo when this mask is drawn on top. Person pixels (non-zero) stay
+    // transparent so the underlying photo shows through unchanged.
     if (maskData[i] === 0) {
-      maskImage.data[pi + 3] = 0;
-    } else {
       maskImage.data[pi] = 255;
       maskImage.data[pi + 1] = 255;
       maskImage.data[pi + 2] = 255;
       maskImage.data[pi + 3] = 255;
+    } else {
+      maskImage.data[pi + 3] = 0;
     }
   }
   maskCtx.putImageData(maskImage, 0, 0);
