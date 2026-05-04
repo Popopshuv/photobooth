@@ -77,7 +77,7 @@ export const RECEIPT = {
    * Vertical breathing room (mm) above AND below the photo. Adds whitespace
    * between the header rule and the photo, and the photo and the body rule.
    */
-  photoMarginMm: 8,
+  photoMarginMm: 15,
   /**
    * Gamma applied to the captured photo before composing onto the receipt.
    * Thermal printers threshold at ~50% gray, so anything mid-tone or darker

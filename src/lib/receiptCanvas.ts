@@ -111,7 +111,8 @@ export async function composeReceipt({
   // Convert printed-page millimeters to canvas pixels: anything in mm gets
   // multiplied by `width / printWidthMm` so scaling the canvas resolution
   // doesn't drift the physical layout.
-  const mmToPx = (mm: number) => Math.round((mm / RECEIPT.printWidthMm) * width);
+  const mmToPx = (mm: number) =>
+    Math.round((mm / RECEIPT.printWidthMm) * width);
   const topQuiet = Math.round(width * 0.06);
   // Bottom quiet zone is sized in millimeters: it's not a visual quiet zone
   // anymore, it's there to push the last printed row past the printer's
@@ -121,11 +122,11 @@ export async function composeReceipt({
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
 
-  const brandSize = Math.round(width * 0.075);
+  const brandSize = Math.round(width * 0.13);
   // ABC Mono Light's thin strokes need at least 3 thermal dots of width to
   // print solid; 0.06 × 58mm ≈ 3.5mm tall (~28 dots) keeps body strokes
   // above that floor instead of fading to dotted lines on the receipt.
-  const bodySize = Math.round(width * 0.06);
+  const bodySize = Math.round(width * 0.1);
   // Line height = text height + a fixed printed-mm gap. mm-based instead of
   // a font-size ratio so the visible space between rows doesn't drift when
   // text size is tuned. RECEIPT.bodyGapMm sets the actual paper gap.
@@ -169,8 +170,7 @@ export async function composeReceipt({
   const footerH = pad + 1 + ruleGap + bodyH + bottomQuiet;
 
   // Header rule -> photoMargin -> photo -> photoMargin -> rule -> body
-  const height =
-    headerH + photoMargin + photoH + photoMargin + 1 + footerH;
+  const height = headerH + photoMargin + photoH + photoMargin + 1 + footerH;
 
   const canvas = document.createElement("canvas");
   // Render at 2x for print sharpness, then we'll downscale on POST if needed.
