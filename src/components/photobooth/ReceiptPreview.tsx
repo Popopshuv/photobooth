@@ -5,10 +5,9 @@ import gsap from "gsap";
 import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
 import { printUrl, RECEIPT } from "@/lib/photoboothConfig";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
-import { removeBackgroundToWhite } from "@/lib/backgroundRemoval";
 import { Spinner } from "@/components/Spinner";
 
-type Status = "segmenting" | "composing" | "ready" | "printing" | "printed" | "error";
+type Status = "composing" | "ready" | "printing" | "printed" | "error";
 
 interface ReceiptPreviewProps {
   /** The captured still as an object URL. */
@@ -28,12 +27,12 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
   // otherwise it fit-to-pages a fixed default and clips the bottom.
   const aspectRef = useRef<number>(1);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-  const [status, setStatus] = useState<Status>(
-    RECEIPT.removeBackground ? "segmenting" : "composing",
-  );
+  const [status, setStatus] = useState<Status>("composing");
   const [error, setError] = useState<string | null>(null);
 
-  // Compose the receipt as soon as we have a photo.
+  // Compose the receipt as soon as we have a photo. The captured JPEG already
+  // has the background removed by the Pi server (Python rembg), so the
+  // browser's only job here is layout, dither, and printing.
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
@@ -45,21 +44,7 @@ export function ReceiptPreview({ photoUrl, onClose }: ReceiptPreviewProps) {
         img.src = photoUrl;
         await img.decode();
 
-        // Selfie segmentation first so the receipt composer sees a
-        // pre-masked photo. Failure here is non-fatal — fall back to the
-        // raw image so a model hiccup never blocks a print.
-        let photoSource: HTMLImageElement | HTMLCanvasElement = img;
-        if (RECEIPT.removeBackground) {
-          try {
-            photoSource = await removeBackgroundToWhite(img);
-          } catch (e) {
-            console.warn("background removal failed, using raw photo", e);
-          }
-          if (cancelled) return;
-        }
-
-        setStatus("composing");
-        const canvas = await composeReceipt({ photo: photoSource });
+        const canvas = await composeReceipt({ photo: img });
         if (cancelled) return;
 
         aspectRef.current = canvas.height / canvas.width;

@@ -52,12 +52,12 @@ export const RECEIPT = {
    */
   printWidthMm: 58,
   /**
-   * Run MediaPipe selfie segmentation on the captured still and composite
-   * the person onto a white background before printing. Looks much cleaner
-   * on 1-bit thermal stock than a noisy real-world background. Set false
-   * to skip (e.g. for testing on a non-Pi machine).
+   * Native print resolution in dots-per-millimeter. Most 58mm/80mm thermal
+   * heads are 203 DPI ≈ 8 dots/mm. Used to size the composed canvas to the
+   * printer's native pixel grid so what you see in the preview is what
+   * gets printed (no resampling step inside CUPS).
    */
-  removeBackground: true,
+  printDotsPerMm: 8,
   lines: [
     "GROUP DYNAMICS",
     "SALT LAKE CITY, UTAH 84105",

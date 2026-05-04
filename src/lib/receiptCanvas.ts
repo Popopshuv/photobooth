@@ -128,7 +128,82 @@ export async function composeReceipt({
     ctx.fillText(line, textPad, y);
   }
 
-  return canvas;
+  // Resample to the printer's native pixel grid and dither to 1-bit so the
+  // preview matches the print exactly (no double-dither inside CUPS, no
+  // color-vs-thermal mismatch on screen).
+  return ditherToThermal(canvas, width);
+}
+
+/**
+ * Bilinearly downsamples the high-res canvas to the printer's native
+ * resolution, then runs Floyd–Steinberg dither so every pixel is either
+ * 0 (black) or 255 (white). The returned canvas is at native print dots,
+ * matching what `rastertozj` will hand the printer one-for-one.
+ */
+function ditherToThermal(
+  source: HTMLCanvasElement,
+  logicalWidth: number,
+): HTMLCanvasElement {
+  const targetW = Math.max(
+    32,
+    Math.round(RECEIPT.printWidthMm * RECEIPT.printDotsPerMm),
+  );
+  const targetH = Math.max(
+    32,
+    Math.round((source.height / source.width) * targetW),
+  );
+
+  const out = document.createElement("canvas");
+  out.width = targetW;
+  out.height = targetH;
+  const octx = out.getContext("2d");
+  if (!octx) throw new Error("dither canvas: 2D context unavailable");
+  // High-quality bilinear so text edges become gradients the dither can
+  // distribute across pixels — the source is `logicalWidth × dpr` wide and
+  // we downsample to `targetW`, almost always a 4:1 reduction.
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = "high";
+  octx.fillStyle = "#ffffff";
+  octx.fillRect(0, 0, targetW, targetH);
+  octx.drawImage(source, 0, 0, targetW, targetH);
+  // logicalWidth is unused once the bilinear downsample lands; held in the
+  // signature in case future tweaks want to thread it through.
+  void logicalWidth;
+
+  const img = octx.getImageData(0, 0, targetW, targetH);
+  const data = img.data;
+  // Floyd–Steinberg in a single grayscale buffer (one float per pixel) so
+  // we don't pay 4x the memory traffic on the diffusion step.
+  const gray = new Float32Array(targetW * targetH);
+  for (let i = 0; i < gray.length; i++) {
+    const p = i * 4;
+    gray[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+  }
+  for (let y = 0; y < targetH; y++) {
+    for (let x = 0; x < targetW; x++) {
+      const i = y * targetW + x;
+      const old = gray[i];
+      const next = old < 128 ? 0 : 255;
+      gray[i] = next;
+      const err = old - next;
+      if (x + 1 < targetW) gray[i + 1] += (err * 7) / 16;
+      if (y + 1 < targetH) {
+        if (x > 0) gray[i + targetW - 1] += (err * 3) / 16;
+        gray[i + targetW] += (err * 5) / 16;
+        if (x + 1 < targetW) gray[i + targetW + 1] += (err * 1) / 16;
+      }
+    }
+  }
+  for (let i = 0; i < gray.length; i++) {
+    const p = i * 4;
+    const v = gray[i];
+    data[p] = v;
+    data[p + 1] = v;
+    data[p + 2] = v;
+    data[p + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  return out;
 }
 
 /** Convert a canvas to a PNG Blob. */

@@ -9,7 +9,7 @@ attached printer to the photobooth web app over HTTP.
 | --------------- | --------------------------------------------------------------------- |
 | `GET /health`   | Sanity check — returns config and current printer.                    |
 | `GET /stream`   | Multipart MJPEG stream. Drop straight into `<img src="…/stream">`.    |
-| `GET /capture`  | A single JPEG still, taken right now.                                 |
+| `GET /capture`  | A single JPEG still — background removed (rembg) and flattened white. |
 | `POST /print`   | Body = image bytes (`image/png` or `image/jpeg`). Sends to CUPS.      |
 
 ## One-time Pi setup
@@ -67,6 +67,26 @@ open http://raspberrypi.local:8000/stream   # macOS preview
 | `PHOTOBOOTH_HEIGHT`  | `720`              | Live-stream height                          |
 | `PHOTOBOOTH_STILL_W` | `2304`             | Still-capture width                         |
 | `PHOTOBOOTH_STILL_H` | `1296`             | Still-capture height                        |
+| `PHOTOBOOTH_REMOVE_BG` | `1`              | `0` to disable rembg (raw JPEG out of /capture) |
+| `PHOTOBOOTH_REMBG_MODEL` | `u2netp`       | `u2net`/`isnet-general-use`/`silueta` for higher quality, slower |
+
+## Background removal
+
+`/capture` runs the still through [rembg](https://github.com/danielgatis/rembg)
+and flattens the cutout onto white before returning the JPEG. This makes
+1-bit thermal prints look much cleaner — random outdoor noise becomes a
+dither nightmare on receipt paper, but a clean white field stays clean.
+
+First-time setup:
+
+```bash
+# rembg downloads its ONNX model on first call (~5–180MB depending on the
+# model). Pre-warm it so the first /capture isn't a 30-second wait:
+source .venv/bin/activate
+python -c "from rembg import new_session; new_session('u2netp')"
+```
+
+To disable (e.g. while debugging the camera): `PHOTOBOOTH_REMOVE_BG=0 python app.py`.
 
 ## Run on boot
 

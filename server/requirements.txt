@@ -3,3 +3,11 @@ flask-cors>=4.0
 # picamera2 is NOT pip-installable on Raspberry Pi OS. Install it via apt:
 #   sudo apt install -y python3-picamera2 python3-libcamera
 # Then create a venv with --system-site-packages so this script can import it.
+
+# Background removal pipeline. rembg ships an ONNX model (~50–180MB depending
+# on which one you pick) that runs on CPU. The first /capture after boot will
+# pause briefly while the model loads — subsequent captures reuse the session.
+rembg>=2.0
+onnxruntime>=1.17
+pillow>=10.0
+numpy>=1.26

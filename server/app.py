@@ -7,19 +7,25 @@ talks to from the browser:
   GET  /health    -> {"ok": true, ...}
   GET  /stream    -> multipart MJPEG stream (drop into <img src=...>)
   GET  /capture   -> single JPEG still (Content-Type: image/jpeg)
+                     Background is removed and composited onto white so the
+                     thermal print looks clean — toggle with PHOTOBOOTH_REMOVE_BG.
   POST /print     -> body: image/png|image/jpeg, sends to CUPS printer
 
 Run:
     python3 app.py            # binds 0.0.0.0:8000
 
 Env:
-    PHOTOBOOTH_PORT       default 8000
-    PHOTOBOOTH_PRINTER    CUPS printer name (lpstat -p). If unset, /print
-                          uses the system default printer.
-    PHOTOBOOTH_WIDTH      stream width  (default 1280)
-    PHOTOBOOTH_HEIGHT     stream height (default 720)
-    PHOTOBOOTH_STILL_W    still width   (default 2304)
-    PHOTOBOOTH_STILL_H    still height  (default 1296)
+    PHOTOBOOTH_PORT        default 8000
+    PHOTOBOOTH_PRINTER     CUPS printer name (lpstat -p). If unset, /print
+                           uses the system default printer.
+    PHOTOBOOTH_WIDTH       stream width  (default 1280)
+    PHOTOBOOTH_HEIGHT      stream height (default 720)
+    PHOTOBOOTH_STILL_W     still width   (default 2304)
+    PHOTOBOOTH_STILL_H     still height  (default 1296)
+    PHOTOBOOTH_REMOVE_BG   "1"/"0" — run rembg on captures (default 1)
+    PHOTOBOOTH_REMBG_MODEL rembg model name (default "u2netp" — small/fast).
+                           Other good options: "u2net" (better quality, ~3x
+                           slower), "isnet-general-use", "silueta".
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
+from PIL import Image
 
 try:
     from picamera2 import Picamera2
@@ -69,6 +76,42 @@ STREAM_H = int(os.environ.get("PHOTOBOOTH_HEIGHT", "720"))
 STILL_W = int(os.environ.get("PHOTOBOOTH_STILL_W", "2304"))
 STILL_H = int(os.environ.get("PHOTOBOOTH_STILL_H", "1296"))
 PRINTER = os.environ.get("PHOTOBOOTH_PRINTER")
+REMOVE_BG = os.environ.get("PHOTOBOOTH_REMOVE_BG", "1") not in ("0", "false", "False", "")
+REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
+
+
+# ---------- background removal -----------------------------------------------
+# rembg's session reuses a loaded ONNX model across calls. Loading is the
+# expensive part (1–10s on a Pi); inference itself is ~0.5–3s per image
+# depending on the chosen model. We lazy-create on first /capture so the
+# server boots fast even if the model isn't downloaded yet.
+
+_rembg_session = None
+_rembg_lock = threading.Lock()
+
+
+def _get_rembg_session():
+    global _rembg_session
+    if _rembg_session is not None:
+        return _rembg_session
+    with _rembg_lock:
+        if _rembg_session is None:
+            from rembg import new_session  # imported lazily — heavy module
+            _rembg_session = new_session(REMBG_MODEL)
+    return _rembg_session
+
+
+def _strip_background(jpeg_bytes: bytes) -> bytes:
+    """Run rembg on a JPEG and return a JPEG with the cutout flattened
+    onto a pure white background (thermal-print friendly)."""
+    from rembg import remove  # lazy import keeps cold-start fast
+    cutout_png = remove(jpeg_bytes, session=_get_rembg_session())
+    cutout = Image.open(io.BytesIO(cutout_png)).convert("RGBA")
+    flat = Image.new("RGB", cutout.size, (255, 255, 255))
+    flat.paste(cutout, mask=cutout.split()[3])
+    out = io.BytesIO()
+    flat.save(out, format="JPEG", quality=92)
+    return out.getvalue()
 
 picam2 = Picamera2()
 
@@ -101,6 +144,8 @@ def health():
         printer=PRINTER or "system-default",
         stream=(STREAM_W, STREAM_H),
         still=(STILL_W, STILL_H),
+        remove_bg=REMOVE_BG,
+        rembg_model=REMBG_MODEL if REMOVE_BG else None,
     )
 
 
@@ -133,12 +178,24 @@ def stream():
 
 @app.route("/capture")
 def capture():
-    """Capture a single still and return the JPEG bytes inline."""
+    """Capture a single still and return the JPEG bytes inline.
+
+    If `PHOTOBOOTH_REMOVE_BG=1` (the default), the image is run through rembg
+    and the cutout is flattened onto pure white before being returned. The
+    browser sees a normal JPEG either way — only the pixels differ.
+    """
     with camera_lock:
         # capture_file with BytesIO gives us a JPEG without round-tripping disk.
         buf = io.BytesIO()
         picam2.capture_file(buf, format="jpeg")
         data = buf.getvalue()
+
+    if REMOVE_BG:
+        try:
+            data = _strip_background(data)
+        except Exception as exc:  # pragma: no cover — fail-soft
+            app.logger.warning("background removal failed: %s — sending raw", exc)
+
     return Response(
         data,
         mimetype="image/jpeg",
