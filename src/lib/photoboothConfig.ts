@@ -44,14 +44,13 @@ export const RECEIPT = {
    */
   textPadPct: 0.04,
   /**
-   * Physical print width in millimeters. Used to tell CUPS the exact custom
-   * media size (`Custom.<W>x<H>mm`) so it doesn't fit-to-page and clip the
-   * bottom of the receipt. Set to your stock width:
-   *   58mm mini thermal          = 58
-   *   80mm thermal receipt       = 80
-   *   2" / Brother VC-500W ZINK  = 50.8
+   * Physical PRINTABLE width in millimeters — i.e. the width of the print
+   * head, not the paper. 58mm thermal printers carry 58mm-wide paper but
+   * have a 48mm-wide print head (384 dots at 8 dots/mm). Anything wider
+   * than the head's 48mm gets clipped or scaled by the driver. Setting
+   * this to the printable width keeps every mm-based knob accurate.
    */
-  printWidthMm: 58,
+  printWidthMm: 48,
   /**
    * Native print resolution in dots-per-millimeter. Most 58mm/80mm thermal
    * heads are 203 DPI ≈ 8 dots/mm. Used to size the composed canvas to the

@@ -78,6 +78,13 @@ STILL_H = int(os.environ.get("PHOTOBOOTH_STILL_H", "1296"))
 PRINTER = os.environ.get("PHOTOBOOTH_PRINTER")
 REMOVE_BG = os.environ.get("PHOTOBOOTH_REMOVE_BG", "1") not in ("0", "false", "False", "")
 REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
+# CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
+# longest predefined "continuous roll" entry — 48mm fixed width, up to
+# 3276mm of feed. The printer only feeds enough paper for the actual
+# image height; this just stops CUPS from fit-to-page'ing the tall
+# canvas down into a fixed label size. Override via env var if your PPD
+# uses different naming (e.g. `X58Y3276` or `Roll`).
+PRINT_PAGESIZE = os.environ.get("PHOTOBOOTH_PAGESIZE", "X48Y3276")
 
 
 # ---------- background removal -----------------------------------------------
@@ -275,17 +282,18 @@ def print_image():
     if PRINTER:
         cmd += ["-d", PRINTER]
 
-    # Tell CUPS the physical page size for THIS job using `PageSize=` (the
-    # standard option name; the queue's default `media=` setting often wins
-    # over per-job `media=` overrides on some CUPS builds, which is what
-    # caused the bottom of the receipt to appear in the wrong spot — the
-    # driver was padding to whatever the queue default was). PageSize is
-    # honoured per-job and tells the rasterizer the exact paper rectangle.
-    w_mm = request.args.get("w_mm", type=float)
-    h_mm = request.args.get("h_mm", type=float)
-    if w_mm and h_mm:
-        cmd += ["-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm"]
-    cmd += [path]
+    # Use the PPD's "long roll" PageSize so the page geometry doesn't fight
+    # us — the printer feeds only the paper the image actually needs. We
+    # also turn off CUPS's image-filter scaling: `fitplot=false` is the
+    # primary switch, `natural-scaling=100` / `scaling=100` are
+    # redundant safety belts that different CUPS builds honor.
+    cmd += [
+        "-o", f"PageSize={PRINT_PAGESIZE}",
+        "-o", "fitplot=false",
+        "-o", "natural-scaling=100",
+        "-o", "scaling=100",
+        path,
+    ]
 
     print(f"[print] {' '.join(cmd)}", flush=True)
 
