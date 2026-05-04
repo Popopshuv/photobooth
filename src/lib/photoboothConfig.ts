@@ -68,14 +68,20 @@ export const RECEIPT = {
    * are blowing out.
    */
   photoGamma: 1.8,
+  /**
+   * Lines in the receipt body. Strings render full-width; tuples render as
+   * a real two-column table (label flush left, value flush right) so the
+   * layout doesn't depend on monospace dot-leaders, which the thermal
+   * head can drop. `null` is a blank-line spacer.
+   */
   lines: [
     "GROUP DYNAMICS",
-    "SALT LAKE CITY, UTAH 84105",
+    "SALT LAKE CITY, UTAH",
     "EST. 2026",
-    "",
-    "ITEM ............ 1x PORTRAIT",
-    "FORMAT .......... 2 x 4 RECEIPT",
-    "",
+    null,
+    ["ITEM", "1x PORTRAIT"],
+    ["FORMAT", "2x4 RECEIPT"],
+    null,
     "THANK YOU FOR SITTING.",
-  ],
+  ] as ReadonlyArray<string | null | readonly [string, string]>,
 } as const;

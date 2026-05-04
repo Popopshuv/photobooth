@@ -5,15 +5,15 @@ import gsap from "gsap";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 
 interface CountdownProps {
-  /** When set, runs a 5→1 countdown then calls `onDone`. */
+  /** When set, runs a 4→1 countdown then calls `onDone`. */
   active: boolean;
   onDone: () => void;
 }
 
-const DIGITS = ["5", "4", "3", "2", "1"];
+const DIGITS = ["4", "3", "2", "1"];
 
 /**
- * Big centred 5-4-3-2-1 countdown. Each digit masks in, settles, then masks
+ * Big centred 4-3-2-1 countdown. Each digit masks in, settles, then masks
  * out — the final mask-out triggers the next digit so timing is exact.
  */
 export function Countdown({ active, onDone }: CountdownProps) {
