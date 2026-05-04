@@ -94,10 +94,17 @@ PRINT_SAVE_DIR = os.environ.get(
     "PHOTOBOOTH_SAVE_DIR", os.path.expanduser("~/Desktop")
 )
 # Physical paper width in millimeters (the actual roll, including the
-# unprintable hardware margin on each side). Used to pad the PDF page so
+# unprintable hardware margin on each side). Used to pad the page so
 # the print head lands the printable content centered on the paper rather
 # than flush against the left edge (which crops the leftmost ~5mm).
 PAPER_WIDTH_MM = float(os.environ.get("PHOTOBOOTH_PAPER_WIDTH_MM", "58"))
+# Whether to convert the incoming PNG to PDF before handing to lp. PDF
+# carries page geometry inside the file, which CUPS's pdftoraster filter
+# respects exactly — but only if cups-filters is installed (provides
+# pdftoraster). Without that, lp passes raw PDF bytes through to the
+# printer which interprets them as ESC/POS gibberish. Default off; flip
+# to "1" once you've run `sudo apt install -y cups-filters`.
+USE_PDF = os.environ.get("PHOTOBOOTH_USE_PDF", "0") == "1"
 
 
 # ---------- background removal -----------------------------------------------
@@ -311,43 +318,56 @@ def print_image():
         fh.write(data)
         path = fh.name
 
-    # Convert to a single-page PDF whose page width matches the PHYSICAL
-    # paper width (PAPER_WIDTH_MM, default 58mm) — not the printable
-    # width. The image is centered horizontally inside the page with
-    # white padding on the left and right; that padding falls into the
-    # printer's hardware unprintable margins (~5mm each side on a 58mm
-    # roll), leaving the actual content perfectly aligned in the
-    # printable zone. Without this padding the PDF page is placed at
-    # paper-left and the leftmost ~5mm of content gets cropped.
+    # Pad the PNG horizontally so its width matches the physical paper
+    # width — the side padding falls into the printer's hardware
+    # unprintable margins, leaving content centered on the printable
+    # zone instead of getting clipped on the left. Always do this for
+    # both PNG (the default print path) and PDF (the optional path).
     w_mm = request.args.get("w_mm", type=float)
     h_mm = request.args.get("h_mm", type=float)
-    print_path = path
-    pdf_path: Optional[str] = None
-    try:
-        if w_mm and h_mm and img_w and img_h:
-            pdf_path = path.replace(suffix, ".pdf")
+    page_w_mm = w_mm
+    if w_mm and h_mm and img_w and img_h:
+        try:
             target_dpi = img_w / (w_mm / 25.4)
             paper_width_px = int(PAPER_WIDTH_MM / 25.4 * target_dpi)
-            page_w_mm = w_mm
-            img_for_pdf = img_meta
             if paper_width_px > img_w:
                 side_pad = (paper_width_px - img_w) // 2
                 padded = Image.new("RGB", (paper_width_px, img_h), (255, 255, 255))
                 padded.paste(img_meta, (side_pad, 0))
-                img_for_pdf = padded
+                img_meta = padded
+                img_w = paper_width_px
                 page_w_mm = PAPER_WIDTH_MM
-            img_for_pdf.save(pdf_path, format="PDF", resolution=target_dpi)
-            # Stash the actual page dims for the lp -o PageSize line.
-            request.environ["_pdf_page_w_mm"] = page_w_mm
-            request.environ["_pdf_page_h_mm"] = h_mm
+                # Re-emit the PNG bytes from the now-padded image so the
+                # tempfile and mirror copies use the centered version.
+                buf = io.BytesIO()
+                img_meta.save(buf, format="PNG", dpi=(203, 203))
+                data = buf.getvalue()
+            print(
+                f"[print] padded to {img_w}px wide ({page_w_mm:g}mm), "
+                f"content centered",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[print] could not pad image: {exc}", flush=True)
+
+    # Optionally convert to PDF if cups-filters is installed (provides
+    # `pdftoraster`). Without that filter, `lp` passes raw PDF bytes to
+    # the printer which prints garbage — so PDF is opt-in via env var.
+    print_path = path
+    pdf_path: Optional[str] = None
+    if USE_PDF and w_mm and h_mm and img_w and img_h:
+        try:
+            pdf_path = path.replace(suffix, ".pdf")
+            target_dpi = img_w / (page_w_mm / 25.4)
+            img_meta.save(pdf_path, format="PDF", resolution=target_dpi)
             print_path = pdf_path
             print(
                 f"[print] converted to PDF ({page_w_mm:g}x{h_mm:g}mm @ "
-                f"{target_dpi:.1f}dpi, content centered): {pdf_path}",
+                f"{target_dpi:.1f}dpi): {pdf_path}",
                 flush=True,
             )
-    except Exception as exc:
-        print(f"[print] PDF conversion failed, using PNG: {exc}", flush=True)
+        except Exception as exc:
+            print(f"[print] PDF conversion failed, using PNG: {exc}", flush=True)
 
     # Mirror the file we're handing CUPS to a human-readable location so
     # the dev can open it and verify what we asked the printer to render.
