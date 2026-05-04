@@ -85,6 +85,14 @@ REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
 # canvas down into a fixed label size. Override via env var if your PPD
 # uses different naming (e.g. `X58Y3276` or `Roll`).
 PRINT_PAGESIZE = os.environ.get("PHOTOBOOTH_PAGESIZE", "X48Y3276")
+# When set, every /print job writes a timestamped copy of the exact PNG
+# we hand to `lp` here, so you can open it and confirm what the printer
+# was asked to render. Defaults to ~/Desktop on the host running this
+# server. Set PHOTOBOOTH_SAVE_DIR="" to disable, or to any path you'd
+# rather use.
+PRINT_SAVE_DIR = os.environ.get(
+    "PHOTOBOOTH_SAVE_DIR", os.path.expanduser("~/Desktop")
+)
 
 
 # ---------- background removal -----------------------------------------------
@@ -287,6 +295,21 @@ def print_image():
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
         fh.write(data)
         path = fh.name
+
+    # Mirror the exact bytes we're about to hand `lp` to a human-readable
+    # location so the dev can open it and verify the receipt is composed
+    # correctly. Mirrors AFTER the DPI stamp above so the saved file is
+    # byte-identical to what CUPS sees.
+    if PRINT_SAVE_DIR:
+        try:
+            os.makedirs(PRINT_SAVE_DIR, exist_ok=True)
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            mirror_path = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}{suffix}")
+            with open(mirror_path, "wb") as fh:
+                fh.write(data)
+            print(f"[print] saved a copy to {mirror_path}", flush=True)
+        except Exception as exc:
+            print(f"[print] could not save copy: {exc}", flush=True)
 
     cmd = ["lp"]
     if PRINTER:
