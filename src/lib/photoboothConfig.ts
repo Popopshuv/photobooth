@@ -60,6 +60,20 @@ export const RECEIPT = {
    */
   printDotsPerMm: 8,
   /**
+   * Extra blank paper appended below the last printed row, in millimeters.
+   * Thermal printers without an auto-cutter park the last printed line a
+   * few cm down inside the body — without this, you have to manually feed
+   * paper out before tearing or the content gets sliced off. Bump if your
+   * tear bar is further above the print head; drop to save paper.
+   */
+  tearOffMm: 35,
+  /**
+   * Visible gap between body rows on the printed page, in millimeters.
+   * Independent of font size so spacing reads consistently regardless
+   * of text scale tweaks.
+   */
+  bodyGapMm: 5,
+  /**
    * Gamma applied to the captured photo before composing onto the receipt.
    * Thermal printers threshold at ~50% gray, so anything mid-tone or darker
    * collapses to pure black on print — a normal portrait turns into a

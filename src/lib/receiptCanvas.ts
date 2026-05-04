@@ -108,11 +108,15 @@ export async function composeReceipt({
 }: ComposeOptions): Promise<HTMLCanvasElement> {
   const pad = Math.round(width * padPct);
   const textPad = Math.round(width * textPadPct);
-  // Modest top + bottom quiet zones. Thermal printers don't clip the
-  // leading/trailing edge the way label stock does, so we just need
-  // enough whitespace for the wordmark and footer to breathe.
+  // Convert printed-page millimeters to canvas pixels: anything in mm gets
+  // multiplied by `width / printWidthMm` so scaling the canvas resolution
+  // doesn't drift the physical layout.
+  const mmToPx = (mm: number) => Math.round((mm / RECEIPT.printWidthMm) * width);
   const topQuiet = Math.round(width * 0.06);
-  const bottomQuiet = Math.round(width * 0.06);
+  // Bottom quiet zone is sized in millimeters: it's not a visual quiet zone
+  // anymore, it's there to push the last printed row past the printer's
+  // physical tear bar so you can rip the receipt cleanly.
+  const bottomQuiet = mmToPx(RECEIPT.tearOffMm);
   const photoW = width - pad * 2;
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
@@ -122,9 +126,10 @@ export async function composeReceipt({
   // stroke needs at least ~2 dots to print cleanly. 0.045 × 58mm ≈ 2.6mm
   // tall (~21 dots at 8 dots/mm), which gives the strokes enough mass.
   const bodySize = Math.round(width * 0.045);
-  // Bigger line height ratio so two-column rows have real air between them
-  // and ascenders/descenders never visually touch on print.
-  const bodyLineH = Math.round(bodySize * 1.9);
+  // Line height = text height + a fixed printed-mm gap. mm-based instead of
+  // a font-size ratio so the visible space between rows doesn't drift when
+  // text size is tuned. RECEIPT.bodyGapMm sets the actual paper gap.
+  const bodyLineH = bodySize + mmToPx(RECEIPT.bodyGapMm);
 
   // Force the webfont to load for the exact sizes we'll draw with. Canvas
   // silently falls back to plain monospace if the font face isn't loaded
