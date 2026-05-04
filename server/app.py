@@ -260,19 +260,29 @@ def print_image():
     ctype = request.headers.get("Content-Type", "image/png")
     suffix = ".png" if "png" in ctype else ".jpg"
 
-    # Sniff dimensions before handoff — the canvas-side spacing knobs are
-    # only useful if the actual pixel count is changing too. Mismatch
-    # between the PNG dimensions we receive and the printed receipt length
-    # means the driver is fit-to-page'ing.
+    # Re-save the PNG with explicit 203 DPI metadata. Canvas-emitted PNGs
+    # carry no DPI tag, so CUPS's image filter assumes the default (72 DPI)
+    # and computes the image's "natural size" against that — which makes
+    # `natural-scaling=100` render the bitmap at the wrong physical size.
+    # Tagging the PNG with the printer's actual head resolution (203 DPI =
+    # 8 dots/mm) makes 384px × 1/203" = exactly 48mm wide, matching the
+    # X48 page size 1:1.
+    img_w = 0
+    img_h = 0
     try:
         img_meta = Image.open(io.BytesIO(data))
         img_w, img_h = img_meta.size
+        if "png" in ctype:
+            stamped = io.BytesIO()
+            img_meta.save(stamped, format="PNG", dpi=(203, 203))
+            data = stamped.getvalue()
         print(
-            f"[print] received {img_w}x{img_h}px {ctype} ({len(data)} bytes)",
+            f"[print] received {img_w}x{img_h}px {ctype} "
+            f"(stamped 203dpi, {len(data)} bytes)",
             flush=True,
         )
     except Exception as exc:
-        print(f"[print] could not read image dims: {exc}", flush=True)
+        print(f"[print] could not stamp DPI metadata: {exc}", flush=True)
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
         fh.write(data)
@@ -283,15 +293,16 @@ def print_image():
         cmd += ["-d", PRINTER]
 
     # Use the PPD's "long roll" PageSize so the page geometry doesn't fight
-    # us — the printer feeds only the paper the image actually needs. We
-    # also turn off CUPS's image-filter scaling: `fitplot=false` is the
-    # primary switch, `natural-scaling=100` / `scaling=100` are
-    # redundant safety belts that different CUPS builds honor.
+    # us — the printer feeds only the paper the image actually needs.
+    # `ppi=203` tells the image filter to interpret the PNG as a 203 DPI
+    # bitmap so the natural-size math lines up with the printer's print
+    # head. `natural-scaling=100` then prints the image at 100% of its
+    # natural physical size (no fit-to-page math at all).
     cmd += [
         "-o", f"PageSize={PRINT_PAGESIZE}",
-        "-o", "fitplot=false",
+        "-o", "ppi=203",
         "-o", "natural-scaling=100",
-        "-o", "scaling=100",
+        "-o", "fitplot=false",
         path,
     ]
 
