@@ -38,10 +38,11 @@ export const RECEIPT = {
    */
   padPct: 0.04,
   /**
-   * Extra-wide padding for text (brand wordmark + body lines). Slightly
-   * inset from the photo so characters don't hug the paper edge.
+   * Padding for text (brand wordmark + body lines). Matches `padPct` so
+   * the wordmark and receipt copy line up flush with the left edge of
+   * the photo above them — no double-indent.
    */
-  textPadPct: 0.06,
+  textPadPct: 0.04,
   /**
    * Physical print width in millimeters. Used to tell CUPS the exact custom
    * media size (`Custom.<W>x<H>mm`) so it doesn't fit-to-page and clip the

@@ -88,6 +88,7 @@ REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
 
 _rembg_session = None
 _rembg_lock = threading.Lock()
+_rembg_status: dict = {"ready": False, "error": None}
 
 
 def _get_rembg_session():
@@ -98,6 +99,8 @@ def _get_rembg_session():
         if _rembg_session is None:
             from rembg import new_session  # imported lazily — heavy module
             _rembg_session = new_session(REMBG_MODEL)
+            _rembg_status["ready"] = True
+            _rembg_status["error"] = None
     return _rembg_session
 
 
@@ -112,6 +115,24 @@ def _strip_background(jpeg_bytes: bytes) -> bytes:
     out = io.BytesIO()
     flat.save(out, format="JPEG", quality=92)
     return out.getvalue()
+
+
+def _warm_rembg() -> None:
+    """Load the rembg model in a background thread so the first /capture
+    after boot doesn't pay the 1–10s session-init cost. Errors are recorded
+    on `_rembg_status` and surfaced via /health so install problems show up
+    without having to take a photo first."""
+    try:
+        _get_rembg_session()
+        print(f"[rembg] session ready (model={REMBG_MODEL})", flush=True)
+    except Exception as exc:
+        _rembg_status["ready"] = False
+        _rembg_status["error"] = f"{type(exc).__name__}: {exc}"
+        print(
+            f"[rembg] FAILED to load (model={REMBG_MODEL}): {exc}\n"
+            "        /capture will pass through the raw camera frame.",
+            flush=True,
+        )
 
 picam2 = Picamera2()
 
@@ -146,6 +167,8 @@ def health():
         still=(STILL_W, STILL_H),
         remove_bg=REMOVE_BG,
         rembg_model=REMBG_MODEL if REMOVE_BG else None,
+        rembg_ready=_rembg_status["ready"] if REMOVE_BG else None,
+        rembg_error=_rembg_status["error"] if REMOVE_BG else None,
     )
 
 
@@ -191,10 +214,20 @@ def capture():
         data = buf.getvalue()
 
     if REMOVE_BG:
+        t0 = time.monotonic()
         try:
             data = _strip_background(data)
+            print(
+                f"[capture] bg removed in {time.monotonic() - t0:.2f}s",
+                flush=True,
+            )
         except Exception as exc:  # pragma: no cover — fail-soft
-            app.logger.warning("background removal failed: %s — sending raw", exc)
+            _rembg_status["ready"] = False
+            _rembg_status["error"] = f"{type(exc).__name__}: {exc}"
+            print(
+                f"[capture] bg removal FAILED ({exc}) — sending raw frame",
+                flush=True,
+            )
 
     return Response(
         data,
@@ -228,16 +261,19 @@ def print_image():
     if PRINTER:
         cmd += ["-d", PRINTER]
 
-    # If the client tells us the physical print size in mm, use a custom
-    # media size so CUPS doesn't fit-to-page (and clip) against whatever
-    # default stock is loaded. Otherwise fall back to fit-to-page.
+    # Tell CUPS the physical page size for THIS job using `PageSize=` (the
+    # standard option name; the queue's default `media=` setting often wins
+    # over per-job `media=` overrides on some CUPS builds, which is what
+    # caused the bottom of the receipt to appear in the wrong spot — the
+    # driver was padding to whatever the queue default was). PageSize is
+    # honoured per-job and tells the rasterizer the exact paper rectangle.
     w_mm = request.args.get("w_mm", type=float)
     h_mm = request.args.get("h_mm", type=float)
     if w_mm and h_mm:
-        cmd += ["-o", f"media=Custom.{w_mm:g}x{h_mm:g}mm"]
-    else:
-        cmd += ["-o", "fit-to-page"]
+        cmd += ["-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm"]
     cmd += [path]
+
+    print(f"[print] {' '.join(cmd)}", flush=True)
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -250,12 +286,16 @@ def print_image():
             500,
         )
 
-    return jsonify(ok=True, job=result.stdout.strip(), file=path)
+    return jsonify(ok=True, job=result.stdout.strip(), file=path, cmd=" ".join(cmd))
 
 
 # ---------- entrypoint --------------------------------------------------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PHOTOBOOTH_PORT", "8000"))
+    # Warm rembg in the background so a missing model / broken install
+    # surfaces in the logs immediately, not after the first photo is taken.
+    if REMOVE_BG:
+        threading.Thread(target=_warm_rembg, daemon=True).start()
     # threaded=True so /stream (long-lived) doesn't block /capture & /print.
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)

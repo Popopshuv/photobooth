@@ -44,9 +44,11 @@ export async function composeReceipt({
   const dims = photoDims(photo);
   const photoH = Math.round((photoW * dims.h) / dims.w);
 
-  const brandSize = Math.round(width * 0.045);
-  const bodySize = Math.round(width * 0.026);
-  const bodyLineH = Math.round(bodySize * 1.7);
+  const brandSize = Math.round(width * 0.05);
+  // Bumped from 0.026 — at 0.026 × 58mm ≈ 1.5mm tall, the thermal head
+  // dropped strokes on the lighter monospace weight. 0.034 ≈ 2.0mm.
+  const bodySize = Math.round(width * 0.034);
+  const bodyLineH = Math.round(bodySize * 1.6);
 
   // Force the webfont to load for the exact sizes we'll draw with. Canvas
   // silently falls back to plain monospace if the font face isn't loaded
@@ -128,22 +130,18 @@ export async function composeReceipt({
     ctx.fillText(line, textPad, y);
   }
 
-  // Resample to the printer's native pixel grid and dither to 1-bit so the
-  // preview matches the print exactly (no double-dither inside CUPS, no
-  // color-vs-thermal mismatch on screen).
-  return ditherToThermal(canvas, width);
+  // Resample to the printer's native pixel grid so the preview shows the
+  // same per-dot layout the printer will see. Final 1-bit conversion is
+  // left to rastertozj on the Pi — it has settings tuned for the hardware
+  // and dithering twice produces harsh noise.
+  return resampleToNative(canvas);
 }
 
 /**
- * Bilinearly downsamples the high-res canvas to the printer's native
- * resolution, then runs Floyd–Steinberg dither so every pixel is either
- * 0 (black) or 255 (white). The returned canvas is at native print dots,
- * matching what `rastertozj` will hand the printer one-for-one.
+ * Bilinearly downsample the high-res compose canvas to the printer's native
+ * resolution. No dither — `rastertozj` will threshold to 1-bit at the printer.
  */
-function ditherToThermal(
-  source: HTMLCanvasElement,
-  logicalWidth: number,
-): HTMLCanvasElement {
+function resampleToNative(source: HTMLCanvasElement): HTMLCanvasElement {
   const targetW = Math.max(
     32,
     Math.round(RECEIPT.printWidthMm * RECEIPT.printDotsPerMm),
@@ -156,53 +154,13 @@ function ditherToThermal(
   const out = document.createElement("canvas");
   out.width = targetW;
   out.height = targetH;
-  const octx = out.getContext("2d");
-  if (!octx) throw new Error("dither canvas: 2D context unavailable");
-  // High-quality bilinear so text edges become gradients the dither can
-  // distribute across pixels — the source is `logicalWidth × dpr` wide and
-  // we downsample to `targetW`, almost always a 4:1 reduction.
-  octx.imageSmoothingEnabled = true;
-  octx.imageSmoothingQuality = "high";
-  octx.fillStyle = "#ffffff";
-  octx.fillRect(0, 0, targetW, targetH);
-  octx.drawImage(source, 0, 0, targetW, targetH);
-  // logicalWidth is unused once the bilinear downsample lands; held in the
-  // signature in case future tweaks want to thread it through.
-  void logicalWidth;
-
-  const img = octx.getImageData(0, 0, targetW, targetH);
-  const data = img.data;
-  // Floyd–Steinberg in a single grayscale buffer (one float per pixel) so
-  // we don't pay 4x the memory traffic on the diffusion step.
-  const gray = new Float32Array(targetW * targetH);
-  for (let i = 0; i < gray.length; i++) {
-    const p = i * 4;
-    gray[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
-  }
-  for (let y = 0; y < targetH; y++) {
-    for (let x = 0; x < targetW; x++) {
-      const i = y * targetW + x;
-      const old = gray[i];
-      const next = old < 128 ? 0 : 255;
-      gray[i] = next;
-      const err = old - next;
-      if (x + 1 < targetW) gray[i + 1] += (err * 7) / 16;
-      if (y + 1 < targetH) {
-        if (x > 0) gray[i + targetW - 1] += (err * 3) / 16;
-        gray[i + targetW] += (err * 5) / 16;
-        if (x + 1 < targetW) gray[i + targetW + 1] += (err * 1) / 16;
-      }
-    }
-  }
-  for (let i = 0; i < gray.length; i++) {
-    const p = i * 4;
-    const v = gray[i];
-    data[p] = v;
-    data[p + 1] = v;
-    data[p + 2] = v;
-    data[p + 3] = 255;
-  }
-  octx.putImageData(img, 0, 0);
+  const ctx = out.getContext("2d");
+  if (!ctx) throw new Error("resample canvas: 2D context unavailable");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, targetW, targetH);
+  ctx.drawImage(source, 0, 0, targetW, targetH);
   return out;
 }
 
