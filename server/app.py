@@ -268,29 +268,39 @@ def print_image():
     ctype = request.headers.get("Content-Type", "image/png")
     suffix = ".png" if "png" in ctype else ".jpg"
 
-    # Re-save the PNG with explicit 203 DPI metadata. Canvas-emitted PNGs
-    # carry no DPI tag, so CUPS's image filter assumes the default (72 DPI)
-    # and computes the image's "natural size" against that — which makes
-    # `natural-scaling=100` render the bitmap at the wrong physical size.
-    # Tagging the PNG with the printer's actual head resolution (203 DPI =
-    # 8 dots/mm) makes 384px × 1/203" = exactly 48mm wide, matching the
-    # X48 page size 1:1.
+    # Two preprocessing steps before handing off to CUPS:
+    #   1. Flatten any alpha channel onto white. Canvas-emitted PNGs are
+    #      RGBA; some image viewers and CUPS image filters render
+    #      transparent pixels as black, which makes a "fully opaque" canvas
+    #      appear to be a black rectangle and produces broken prints.
+    #   2. Stamp 203 DPI metadata so the CUPS image filter computes the
+    #      bitmap's natural size against the printer's actual head
+    #      resolution — without this, default 72 DPI math under-renders
+    #      the image to roughly a quarter of the paper width.
     img_w = 0
     img_h = 0
     try:
         img_meta = Image.open(io.BytesIO(data))
         img_w, img_h = img_meta.size
-        if "png" in ctype:
-            stamped = io.BytesIO()
-            img_meta.save(stamped, format="PNG", dpi=(203, 203))
-            data = stamped.getvalue()
+        if img_meta.mode in ("RGBA", "LA"):
+            flat = Image.new("RGB", img_meta.size, (255, 255, 255))
+            flat.paste(img_meta, mask=img_meta.split()[-1])
+            img_meta = flat
+        elif img_meta.mode != "RGB":
+            img_meta = img_meta.convert("RGB")
+        stamped = io.BytesIO()
+        img_meta.save(stamped, format="PNG", dpi=(203, 203))
+        data = stamped.getvalue()
+        # Force the on-disk filename to match what we actually wrote.
+        suffix = ".png"
+        ctype = "image/png"
         print(
-            f"[print] received {img_w}x{img_h}px {ctype} "
-            f"(stamped 203dpi, {len(data)} bytes)",
+            f"[print] received {img_w}x{img_h}px (flattened to RGB, "
+            f"stamped 203dpi, {len(data)} bytes)",
             flush=True,
         )
     except Exception as exc:
-        print(f"[print] could not stamp DPI metadata: {exc}", flush=True)
+        print(f"[print] could not preprocess image: {exc}", flush=True)
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
         fh.write(data)
