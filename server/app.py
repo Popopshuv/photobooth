@@ -314,15 +314,14 @@ def print_image():
     except Exception as exc:
         print(f"[print] could not preprocess image: {exc}", flush=True)
 
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
-        fh.write(data)
-        path = fh.name
-
     # Pad the PNG horizontally so its width matches the physical paper
     # width — the side padding falls into the printer's hardware
     # unprintable margins, leaving content centered on the printable
-    # zone instead of getting clipped on the left. Always do this for
-    # both PNG (the default print path) and PDF (the optional path).
+    # zone instead of getting clipped on the left. This MUST happen
+    # before the tempfile is written, or lp ends up printing the
+    # un-padded image while being told the page is 58mm wide — a
+    # width mismatch that the driver "fixes" by overflowing to a
+    # phantom second column. (How we ended up with split prints.)
     w_mm = request.args.get("w_mm", type=float)
     h_mm = request.args.get("h_mm", type=float)
     page_w_mm = w_mm
@@ -338,7 +337,7 @@ def print_image():
                 img_w = paper_width_px
                 page_w_mm = PAPER_WIDTH_MM
                 # Re-emit the PNG bytes from the now-padded image so the
-                # tempfile and mirror copies use the centered version.
+                # tempfile + mirror + PDF all share the centered version.
                 buf = io.BytesIO()
                 img_meta.save(buf, format="PNG", dpi=(203, 203))
                 data = buf.getvalue()
@@ -349,6 +348,11 @@ def print_image():
             )
         except Exception as exc:
             print(f"[print] could not pad image: {exc}", flush=True)
+
+    # Now write the tempfile with the FINAL padded bytes that lp will read.
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
+        fh.write(data)
+        path = fh.name
 
     # Optionally convert to PDF if cups-filters is installed (provides
     # `pdftoraster`). Without that filter, `lp` passes raw PDF bytes to
@@ -394,15 +398,15 @@ def print_image():
     if PRINTER:
         cmd += ["-d", PRINTER]
 
-    # We're sending PDF (or PNG fallback) — page geometry is in the file
-    # itself for PDFs, so the per-job options here are belt-and-braces.
-    # Use the padded page dims if PDF conversion ran, otherwise raw client.
-    page_w = request.environ.get("_pdf_page_w_mm", w_mm)
-    page_h = request.environ.get("_pdf_page_h_mm", h_mm)
-    if page_w and page_h:
+    # Page width here MUST match the actual width of the file we're
+    # sending. After padding above, `page_w_mm` is the paper width
+    # (58mm) when padding kicked in, otherwise the original client-
+    # supplied width. Mismatching this with the on-disk image width is
+    # what produced the split-into-two-columns prints.
+    if page_w_mm and h_mm:
         cmd += [
-            "-o", f"PageSize=Custom.{page_w:g}x{page_h:g}mm",
-            "-o", f"media=Custom.{page_w:g}x{page_h:g}mm",
+            "-o", f"PageSize=Custom.{page_w_mm:g}x{h_mm:g}mm",
+            "-o", f"media=Custom.{page_w_mm:g}x{h_mm:g}mm",
         ]
     else:
         cmd += ["-o", f"PageSize={PRINT_PAGESIZE}"]
