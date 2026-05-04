@@ -93,6 +93,11 @@ PRINT_PAGESIZE = os.environ.get("PHOTOBOOTH_PAGESIZE", "X48Y3276")
 PRINT_SAVE_DIR = os.environ.get(
     "PHOTOBOOTH_SAVE_DIR", os.path.expanduser("~/Desktop")
 )
+# Physical paper width in millimeters (the actual roll, including the
+# unprintable hardware margin on each side). Used to pad the PDF page so
+# the print head lands the printable content centered on the paper rather
+# than flush against the left edge (which crops the leftmost ~5mm).
+PAPER_WIDTH_MM = float(os.environ.get("PHOTOBOOTH_PAPER_WIDTH_MM", "58"))
 
 
 # ---------- background removal -----------------------------------------------
@@ -306,12 +311,14 @@ def print_image():
         fh.write(data)
         path = fh.name
 
-    # Convert to a single-page PDF whose page size matches the image's
-    # exact physical dimensions. PDFs carry their geometry inside the
-    # document, so CUPS's pdftoraster filter respects them precisely —
-    # this bypasses the image-filter chain that's been silently fitting
-    # our tall canvases into a fixed page size. PNG remains the fallback
-    # if conversion fails for any reason.
+    # Convert to a single-page PDF whose page width matches the PHYSICAL
+    # paper width (PAPER_WIDTH_MM, default 58mm) — not the printable
+    # width. The image is centered horizontally inside the page with
+    # white padding on the left and right; that padding falls into the
+    # printer's hardware unprintable margins (~5mm each side on a 58mm
+    # roll), leaving the actual content perfectly aligned in the
+    # printable zone. Without this padding the PDF page is placed at
+    # paper-left and the leftmost ~5mm of content gets cropped.
     w_mm = request.args.get("w_mm", type=float)
     h_mm = request.args.get("h_mm", type=float)
     print_path = path
@@ -319,15 +326,24 @@ def print_image():
     try:
         if w_mm and h_mm and img_w and img_h:
             pdf_path = path.replace(suffix, ".pdf")
-            # Pillow's PDF save scales the image to W×H inches where
-            # W = image_width_px / resolution. Set resolution so the
-            # resulting page is exactly w_mm × h_mm in size.
             target_dpi = img_w / (w_mm / 25.4)
-            img_meta.save(pdf_path, format="PDF", resolution=target_dpi)
+            paper_width_px = int(PAPER_WIDTH_MM / 25.4 * target_dpi)
+            page_w_mm = w_mm
+            img_for_pdf = img_meta
+            if paper_width_px > img_w:
+                side_pad = (paper_width_px - img_w) // 2
+                padded = Image.new("RGB", (paper_width_px, img_h), (255, 255, 255))
+                padded.paste(img_meta, (side_pad, 0))
+                img_for_pdf = padded
+                page_w_mm = PAPER_WIDTH_MM
+            img_for_pdf.save(pdf_path, format="PDF", resolution=target_dpi)
+            # Stash the actual page dims for the lp -o PageSize line.
+            request.environ["_pdf_page_w_mm"] = page_w_mm
+            request.environ["_pdf_page_h_mm"] = h_mm
             print_path = pdf_path
             print(
-                f"[print] converted to PDF ({w_mm:g}x{h_mm:g}mm @ "
-                f"{target_dpi:.1f}dpi): {pdf_path}",
+                f"[print] converted to PDF ({page_w_mm:g}x{h_mm:g}mm @ "
+                f"{target_dpi:.1f}dpi, content centered): {pdf_path}",
                 flush=True,
             )
     except Exception as exc:
@@ -360,10 +376,13 @@ def print_image():
 
     # We're sending PDF (or PNG fallback) — page geometry is in the file
     # itself for PDFs, so the per-job options here are belt-and-braces.
-    if w_mm and h_mm:
+    # Use the padded page dims if PDF conversion ran, otherwise raw client.
+    page_w = request.environ.get("_pdf_page_w_mm", w_mm)
+    page_h = request.environ.get("_pdf_page_h_mm", h_mm)
+    if page_w and page_h:
         cmd += [
-            "-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm",
-            "-o", f"media=Custom.{w_mm:g}x{h_mm:g}mm",
+            "-o", f"PageSize=Custom.{page_w:g}x{page_h:g}mm",
+            "-o", f"media=Custom.{page_w:g}x{page_h:g}mm",
         ]
     else:
         cmd += ["-o", f"PageSize={PRINT_PAGESIZE}"]
