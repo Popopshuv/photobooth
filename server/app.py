@@ -58,6 +58,7 @@ try:
     from picamera2 import Picamera2
     from picamera2.encoders import MJPEGEncoder
     from picamera2.outputs import FileOutput
+    from libcamera import Transform
 except ImportError as exc:  # pragma: no cover - dev machine
     raise SystemExit(
         "picamera2 not available. Install with `sudo apt install -y python3-picamera2` "
@@ -87,6 +88,12 @@ STREAM_W = int(os.environ.get("PHOTOBOOTH_WIDTH", "1280"))
 STREAM_H = int(os.environ.get("PHOTOBOOTH_HEIGHT", "720"))
 STILL_W = int(os.environ.get("PHOTOBOOTH_STILL_W", "2304"))
 STILL_H = int(os.environ.get("PHOTOBOOTH_STILL_H", "1296"))
+# Mirror frames horizontally at the camera level. People expect the
+# preview to behave like a mirror (move-left-see-yourself-move-left), and
+# captures match what they saw on screen. Toggle via env var if you ever
+# need it off (e.g. printing text in the photo that shouldn't reverse).
+HFLIP = os.environ.get("PHOTOBOOTH_HFLIP", "1") not in ("0", "false", "False", "")
+VFLIP = os.environ.get("PHOTOBOOTH_VFLIP", "0") not in ("0", "false", "False", "")
 PRINTER = os.environ.get("PHOTOBOOTH_PRINTER")
 REMOVE_BG = os.environ.get("PHOTOBOOTH_REMOVE_BG", "1") not in ("0", "false", "False", "")
 REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
@@ -206,6 +213,7 @@ picam2 = Picamera2()
 # `capture_file` which gives us a still from the same configured sensor mode.
 video_config = picam2.create_video_configuration(
     main={"size": (STREAM_W, STREAM_H), "format": "RGB888"},
+    transform=Transform(hflip=HFLIP, vflip=VFLIP),
 )
 picam2.configure(video_config)
 
