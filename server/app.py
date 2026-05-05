@@ -23,11 +23,10 @@ Env:
                              directly to the printer over USB — fastest, no
                              filter chain, no fit-to-page surprises. Set to
                              "cups" to fall back to the old `lp` path.
-    PHOTOBOOTH_PRINTER_VID   USB vendor id of the thermal printer (hex,
-                             e.g. "0x0fe6"). Default 0x0fe6 (common Bisofice
-                             / generic 58mm). Find yours with `lsusb`.
-    PHOTOBOOTH_PRINTER_PID   USB product id (hex, e.g. "0x811e"). Default
-                             0x811e. Find with `lsusb`.
+    PHOTOBOOTH_PRINTER_VID   USB vendor id of the thermal printer (hex).
+                             Default 0x6868 (Tech CLa58). Find yours with
+                             `lsusb`.
+    PHOTOBOOTH_PRINTER_PID   USB product id (hex). Default 0x0200.
     PHOTOBOOTH_PRINTER_FEED  Number of blank lines fed after the receipt
                              so the tear bar lands below content. Default 6.
     PHOTOBOOTH_PRINTER       CUPS printer name (only used if METHOD=cups)
@@ -94,8 +93,8 @@ REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
 # escpos = direct USB ESC/POS (default, what every POS system uses).
 # cups   = the old `lp` subprocess path. Only useful as a fallback.
 PRINT_METHOD = os.environ.get("PHOTOBOOTH_PRINT_METHOD", "escpos")
-PRINTER_VID = int(os.environ.get("PHOTOBOOTH_PRINTER_VID", "0x0fe6"), 16)
-PRINTER_PID = int(os.environ.get("PHOTOBOOTH_PRINTER_PID", "0x811e"), 16)
+PRINTER_VID = int(os.environ.get("PHOTOBOOTH_PRINTER_VID", "0x6868"), 16)
+PRINTER_PID = int(os.environ.get("PHOTOBOOTH_PRINTER_PID", "0x0200"), 16)
 PRINTER_FEED_LINES = int(os.environ.get("PHOTOBOOTH_PRINTER_FEED", "6"))
 # Print head width in dots. Standard for 58mm thermals is 384 dots
 # (203 DPI × 48mm). Bump to 576 for 80mm printers.

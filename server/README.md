@@ -34,20 +34,22 @@ sudo apt install -y python3-picamera2 python3-libcamera python3-pip \
 # Find your thermal printer's USB IDs:
 lsusb
 # Look for your printer in the list — line looks like:
-#   Bus 001 Device 003: ID 0fe6:811e Kingsing
-# Copy the "0fe6:811e" part — first half is VID, second half is PID.
+#   Bus 001 Device 003: ID 6868:0200 Tech CLa58
+# Copy the "6868:0200" part — first half is VID, second half is PID.
 
-# Allow non-root access to the printer's USB device. Replace 0fe6/811e
-# with YOUR ids from lsusb:
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="0fe6", ATTRS{idProduct}=="811e", MODE="0666"' | \
+# Allow non-root access to the printer's USB device. The defaults below
+# match the Tech CLa58 (VID 6868, PID 0200), which is the server's
+# default — replace if yours differs:
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="6868", ATTRS{idProduct}=="0200", MODE="0666"' | \
     sudo tee /etc/udev/rules.d/99-thermal-printer.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 # Unplug + replug the printer to apply the new permissions.
 
-# Tell the server about the IDs (or set them in the systemd unit):
-export PHOTOBOOTH_PRINTER_VID=0x0fe6
-export PHOTOBOOTH_PRINTER_PID=0x811e
+# Only needed if your printer's IDs aren't 6868:0200 — otherwise no env
+# vars are required, the server picks up the defaults automatically:
+# export PHOTOBOOTH_PRINTER_VID=0x6868
+# export PHOTOBOOTH_PRINTER_PID=0x0200
 ```
 
 > The CUPS setup below is **only needed if you want the CUPS fallback**.
