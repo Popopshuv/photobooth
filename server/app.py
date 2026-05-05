@@ -287,7 +287,7 @@ def capture():
     )
 
 
-CHARS_PER_LINE = 32  # 58mm thermal at default font A (12 dots/char × 32 = 384)
+CHARS_PER_LINE = 42  # 58mm thermal at font B (9 dots/char × 42 ≈ 378)
 
 
 def _format_two_column(label: str, value: str, width: int = CHARS_PER_LINE) -> str:
@@ -342,21 +342,23 @@ def _print_receipt_escpos(
 
     printer = Usb(PRINTER_VID, PRINTER_PID, profile="default")
     try:
-        # Header — centered double-size brand wordmark.
-        printer.set(align="center", double_height=True, double_width=True)
+        # Whole receipt prints in font B — smaller / denser than font A.
+        # Brand renders centered + bold for emphasis, body left-aligned.
+        printer.set(font="b", align="center", bold=True)
         printer.text(brand + "\n")
-        printer.set(align="center")
-        printer.text(("-" * CHARS_PER_LINE) + "\n")
+        printer.set(font="b", align="center", bold=False)
+        printer.text("\n")
 
-        # Photo (only bitmap on the receipt).
+        # Photo (only bitmap on the receipt). No dashed rules above/below
+        # — the wordmark + blank lines above and the body below give it
+        # enough visual separation on their own.
         if photo is not None:
             printer.image(photo, impl="bitImageRaster")
+        printer.text("\n")
 
-        printer.text(("-" * CHARS_PER_LINE) + "\n")
-
-        # Body rows — strings render full-width centered, [label, value]
-        # tuples render as a two-column row, null is a blank-line spacer.
-        printer.set(align="left")
+        # Body rows — strings render full-width, [label, value] tuples
+        # render as a two-column row, null is a blank-line spacer.
+        printer.set(font="b", align="left")
         for line in lines:
             if line is None:
                 printer.text("\n")
