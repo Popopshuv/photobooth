@@ -428,6 +428,31 @@ def _prep_photo_for_thermal(img: Image.Image) -> Image.Image:
     return img.convert("1", dither=Image.FLOYDSTEINBERG)
 
 
+def _stack_photos_vertical(
+    photos: list,
+    width_dots: int,
+    gap_px: int = 6,
+) -> Optional[Image.Image]:
+    """Stack a list of pre-prepped 1-bit photos into a single vertical
+    strip with a small white gap between each — the classic photobooth
+    strip layout. Returns None if the list is empty."""
+    if not photos:
+        return None
+    if len(photos) == 1:
+        return photos[0]
+    total_h = sum(p.height for p in photos) + gap_px * (len(photos) - 1)
+    strip = Image.new("1", (width_dots, total_h), 1)  # 1 = white in mode "1"
+    y = 0
+    for i, p in enumerate(photos):
+        if i > 0:
+            y += gap_px
+        # Center horizontally if a photo somehow doesn't match width_dots.
+        x = max(0, (width_dots - p.width) // 2)
+        strip.paste(p, (x, y))
+        y += p.height
+    return strip
+
+
 def _print_receipt_escpos(
     photo: Optional[Image.Image],
     brand: str,
@@ -539,34 +564,32 @@ def _print_via_cups(
 def print_image():
     """Compose a thermal receipt and print it via direct ESC/POS.
 
-    Two request shapes accepted:
-
-      multipart/form-data (preferred, the new path):
-        - photo:   image/jpeg|png  — the captured photo
-        - brand:   string           — wordmark text
-        - lines:   JSON string      — array of strings, [label,value], null
-        - feed_lines: int           — blank line feeds at end (tear margin)
-
-      raw bytes (legacy, the canvas-bitmap path):
-        - body is image bytes; we just print them as a single bitmap.
-
-    The new path renders text using the printer's built-in font (crisp,
-    fast, perfect alignment) and uses the photo as the only bitmap. The
-    legacy path is kept so a browser still sending a composed canvas
-    PNG continues to work.
+    Multipart fields:
+      photos      — one or more image files (photobooth strip mode); each
+                    file is prepped for thermal and stacked vertically
+      photo       — alias for a single-photo session (back-compat)
+      brand       — wordmark string
+      lines       — JSON array (strings, [label,value] tuples, or null)
+      feed_lines  — int, blank line feeds at the end (tear margin)
     """
-    photo_img: Optional[Image.Image] = None
     brand = "groupdynamics.net"
     lines: list = []
     feed_lines = PRINTER_FEED_LINES
 
-    if "photo" in request.files:
-        # New native path.
+    # Accept either `photos` (multiple) or `photo` (single, back-compat).
+    photo_files = request.files.getlist("photos")
+    if not photo_files and "photo" in request.files:
+        photo_files = [request.files["photo"]]
+
+    if photo_files:
+        prepped: list = []
         try:
-            photo_img = Image.open(request.files["photo"].stream)
-            photo_img = _prep_photo_for_thermal(photo_img)
+            for pf in photo_files:
+                img = Image.open(pf.stream)
+                prepped.append(_prep_photo_for_thermal(img))
         except Exception as exc:
             return jsonify(ok=False, error=f"photo decode failed: {exc}"), 400
+        photo_img = _stack_photos_vertical(prepped, PRINTER_HEAD_DOTS)
         brand = request.form.get("brand", brand).strip() or brand
         try:
             lines = json.loads(request.form.get("lines", "[]"))
@@ -579,7 +602,8 @@ def print_image():
 
         print(
             f"[print] native ESC/POS — brand={brand!r}, "
-            f"{len(lines)} body lines, photo={photo_img.size}",
+            f"{len(lines)} body lines, "
+            f"{len(photo_files)} photo(s), strip={photo_img.size if photo_img else None}",
             flush=True,
         )
 

@@ -22,22 +22,27 @@ const PRINTED_HOLD_MS = 1400;
 export function PhotoboothContent() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
+  // Which photo of the strip we're currently working on (1-indexed for the
+  // user-facing chrome, 0-based internally). Drives the "1/4" indicator.
+  const [photoIndex, setPhotoIndex] = useState(0);
 
   const uiRef = useRef<HTMLDivElement>(null);
-  // Flash and capture race each other. When both finish we kick off the
-  // compose+print pipeline.
+  // Flash and capture race each other. When both finish we either kick
+  // off the next photo's countdown or, on the last photo, the print.
   const flashedRef = useRef(false);
   const pendingPhotoRef = useRef<string | null>(null);
+  // Photos accumulated this session — sent together to /print at the end.
+  const photoStripRef = useRef<string[]>([]);
 
-  const composeAndPrint = useCallback(async (photoUrl: string) => {
+  const composeAndPrint = useCallback(async (photoUrls: string[]) => {
     try {
-      // Send the photo and the receipt copy to the server. The server
-      // composes the receipt using native ESC/POS commands — no canvas,
-      // no PNG, no CUPS. Photo is the only bitmap; everything else
-      // prints as crisp printer-rendered text.
-      const photoBlob = await (await fetch(photoUrl)).blob();
+      // Multipart with one `photos` entry per photo. The server stacks
+      // them into a vertical strip and prints as a single bitmap.
       const form = new FormData();
-      form.append("photo", photoBlob, "photo.jpg");
+      for (const url of photoUrls) {
+        const blob = await (await fetch(url)).blob();
+        form.append("photos", blob);
+      }
       form.append("brand", RECEIPT.brand);
       form.append("lines", JSON.stringify(RECEIPT.lines));
       form.append("feed_lines", String(RECEIPT.feedLines));
@@ -48,23 +53,35 @@ export function PhotoboothContent() {
         throw new Error(text || `print failed (${res.status})`);
       }
 
-      URL.revokeObjectURL(photoUrl);
+      photoUrls.forEach((u) => URL.revokeObjectURL(u));
       setPhase("printed");
       window.setTimeout(() => setPhase("idle"), PRINTED_HOLD_MS);
     } catch (e) {
-      URL.revokeObjectURL(photoUrl);
+      photoUrls.forEach((u) => URL.revokeObjectURL(u));
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
   }, []);
 
-  const tryAdvanceToPrinting = useCallback(() => {
+  const tryAdvanceAfterCapture = useCallback(() => {
     if (!flashedRef.current || !pendingPhotoRef.current) return;
     const url = pendingPhotoRef.current;
     pendingPhotoRef.current = null;
     flashedRef.current = false;
-    setPhase("printing");
-    composeAndPrint(url);
+
+    photoStripRef.current.push(url);
+    const captured = photoStripRef.current.length;
+
+    if (captured >= RECEIPT.photoCount) {
+      // Last photo — send the whole strip to print.
+      setPhase("printing");
+      composeAndPrint([...photoStripRef.current]);
+      photoStripRef.current = [];
+    } else {
+      // More to go — small breathing pause, then re-arm the countdown.
+      setPhotoIndex(captured);
+      window.setTimeout(() => setPhase("countdown"), RECEIPT.betweenPhotosMs);
+    }
   }, [composeAndPrint]);
 
   // Hide the chrome any time the moment isn't "ready to capture".
@@ -88,6 +105,8 @@ export function PhotoboothContent() {
     setError(null);
     flashedRef.current = false;
     pendingPhotoRef.current = null;
+    photoStripRef.current = [];
+    setPhotoIndex(0);
     setPhase("countdown");
   }, [phase]);
 
@@ -98,23 +117,49 @@ export function PhotoboothContent() {
       if (!res.ok) throw new Error(`capture failed (${res.status})`);
       const blob = await res.blob();
       pendingPhotoRef.current = URL.createObjectURL(blob);
-      tryAdvanceToPrinting();
+      tryAdvanceAfterCapture();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
-  }, [tryAdvanceToPrinting]);
+  }, [tryAdvanceAfterCapture]);
 
   const onFlashDone = useCallback(() => {
     flashedRef.current = true;
-    tryAdvanceToPrinting();
-  }, [tryAdvanceToPrinting]);
+    tryAdvanceAfterCapture();
+  }, [tryAdvanceAfterCapture]);
+
+  // Live count of which photo we're on, for the 1/4 indicator. After
+  // each capture `photoIndex` is the count of completed shots.
+  const totalPhotos = RECEIPT.photoCount;
+  const currentShot = Math.min(totalPhotos, photoIndex + 1);
 
   return (
     <>
       <Stage flash={phase === "flashing"} onFlashDone={onFlashDone} />
 
       <Countdown active={phase === "countdown"} onDone={onCountdownDone} />
+
+      {/* Full-viewport tap target while idle — anywhere on screen starts
+          the session. Sits above the stream but below the chrome so
+          existing labelled controls still receive their own clicks. */}
+      {phase === "idle" && (
+        <button
+          type="button"
+          onClick={startCountdown}
+          aria-label="Take photos"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            margin: 0,
+            cursor: "pointer",
+            zIndex: 5,
+          }}
+        />
+      )}
 
       {(phase === "printing" || phase === "printed") && (
         <PrintOverlay phase={phase} />
@@ -166,7 +211,9 @@ export function PhotoboothContent() {
               mixBlendMode: "difference",
             }}
           >
-            est. 2026
+            {phase === "countdown" || phase === "flashing"
+              ? `${currentShot} / ${totalPhotos}`
+              : "est. 2026"}
           </RevealText>
         </header>
 
@@ -198,13 +245,17 @@ export function PhotoboothContent() {
             type="button"
             onClick={startCountdown}
             disabled={phase !== "idle"}
-            aria-label="Take photo"
+            aria-label="Take photos"
             className="hover:opacity-50 transition-opacity"
             style={{
               appearance: "none",
               background: "transparent",
               border: "none",
-              padding: 0,
+              // Generous tap target — the visual is just text, but the
+              // padded box around it is the actual click area, so users
+              // don't have to land precisely on the bracket characters.
+              padding: "1.25rem 1.5rem",
+              margin: "-1.25rem -1.5rem",
               fontFamily: "var(--font-abc)",
               fontSize: "var(--text-xs)",
               letterSpacing: "0.3em",

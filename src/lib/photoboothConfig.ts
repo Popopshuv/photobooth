@@ -54,4 +54,15 @@ export const RECEIPT = {
    * park the last line down inside the body — feed past it.
    */
   feedLines: 6,
+  /**
+   * How many photos to capture per session. The server stacks them
+   * vertically into a strip before printing — set to 1 for a single
+   * portrait, 4 for the classic photobooth strip.
+   */
+  photoCount: 4,
+  /**
+   * Pause between an individual capture's flash and the next countdown
+   * (ms). Gives users a beat to reset their pose without rushing them.
+   */
+  betweenPhotosMs: 600,
 } as const;
