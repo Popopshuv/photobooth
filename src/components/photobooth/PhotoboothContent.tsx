@@ -5,7 +5,6 @@ import gsap from "gsap";
 import { RevealText } from "@/components/RevealText";
 import { Spinner } from "@/components/Spinner";
 import { captureUrl, printUrl, RECEIPT } from "@/lib/photoboothConfig";
-import { canvasToPng, composeReceipt } from "@/lib/receiptCanvas";
 import { prefersReducedMotion } from "@/lib/prefersReducedMotion";
 import { Stage } from "./Stage";
 import { Countdown } from "./Countdown";
@@ -32,22 +31,18 @@ export function PhotoboothContent() {
 
   const composeAndPrint = useCallback(async (photoUrl: string) => {
     try {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = photoUrl;
-      await img.decode();
+      // Send the photo and the receipt copy to the server. The server
+      // composes the receipt using native ESC/POS commands — no canvas,
+      // no PNG, no CUPS. Photo is the only bitmap; everything else
+      // prints as crisp printer-rendered text.
+      const photoBlob = await (await fetch(photoUrl)).blob();
+      const form = new FormData();
+      form.append("photo", photoBlob, "photo.jpg");
+      form.append("brand", RECEIPT.brand);
+      form.append("lines", JSON.stringify(RECEIPT.lines));
+      form.append("feed_lines", String(RECEIPT.feedLines));
 
-      const canvas = await composeReceipt({ photo: img });
-      const blob = await canvasToPng(canvas);
-      const aspect = canvas.height / canvas.width;
-      const wMm = RECEIPT.printWidthMm;
-      const hMm = +(wMm * aspect).toFixed(1);
-
-      const res = await fetch(`${printUrl()}?w_mm=${wMm}&h_mm=${hMm}`, {
-        method: "POST",
-        headers: { "Content-Type": "image/png" },
-        body: blob,
-      });
+      const res = await fetch(printUrl(), { method: "POST", body: form });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(text || `print failed (${res.status})`);

@@ -1,37 +1,50 @@
 """Photobooth server — runs on the Raspberry Pi.
 
 Exposes the CSI camera (Freenove / Pi camera via libcamera/picamera2) and the
-USB-connected printer (via CUPS `lp`) over a small HTTP API the Next.js app
-talks to from the browser:
+USB thermal printer over a small HTTP API the Next.js app talks to from the
+browser:
 
   GET  /health    -> {"ok": true, ...}
   GET  /stream    -> multipart MJPEG stream (drop into <img src=...>)
   GET  /capture   -> single JPEG still (Content-Type: image/jpeg)
                      Background is removed and composited onto white so the
                      thermal print looks clean — toggle with PHOTOBOOTH_REMOVE_BG.
-  POST /print     -> body: image/png|image/jpeg, sends to CUPS printer
+  POST /print     -> body: image/png|image/jpeg, sends to printer.
+                     Default path is direct ESC/POS over USB via python-escpos
+                     — same protocol every retail POS system uses. CUPS is
+                     available as a fallback for installs that need it.
 
 Run:
     python3 app.py            # binds 0.0.0.0:8000
 
 Env:
-    PHOTOBOOTH_PORT        default 8000
-    PHOTOBOOTH_PRINTER     CUPS printer name (lpstat -p). If unset, /print
-                           uses the system default printer.
-    PHOTOBOOTH_WIDTH       stream width  (default 1280)
-    PHOTOBOOTH_HEIGHT      stream height (default 720)
-    PHOTOBOOTH_STILL_W     still width   (default 2304)
-    PHOTOBOOTH_STILL_H     still height  (default 1296)
-    PHOTOBOOTH_REMOVE_BG   "1"/"0" — run rembg on captures (default 1)
-    PHOTOBOOTH_REMBG_MODEL rembg model name (default "u2netp" — small/fast).
-                           Other good options: "u2net" (better quality, ~3x
-                           slower), "isnet-general-use", "silueta".
+    PHOTOBOOTH_PORT          default 8000
+    PHOTOBOOTH_PRINT_METHOD  "escpos" (default) | "cups". escpos talks
+                             directly to the printer over USB — fastest, no
+                             filter chain, no fit-to-page surprises. Set to
+                             "cups" to fall back to the old `lp` path.
+    PHOTOBOOTH_PRINTER_VID   USB vendor id of the thermal printer (hex,
+                             e.g. "0x0fe6"). Default 0x0fe6 (common Bisofice
+                             / generic 58mm). Find yours with `lsusb`.
+    PHOTOBOOTH_PRINTER_PID   USB product id (hex, e.g. "0x811e"). Default
+                             0x811e. Find with `lsusb`.
+    PHOTOBOOTH_PRINTER_FEED  Number of blank lines fed after the receipt
+                             so the tear bar lands below content. Default 6.
+    PHOTOBOOTH_PRINTER       CUPS printer name (only used if METHOD=cups)
+    PHOTOBOOTH_WIDTH         stream width  (default 1280)
+    PHOTOBOOTH_HEIGHT        stream height (default 720)
+    PHOTOBOOTH_STILL_W       still width   (default 2304)
+    PHOTOBOOTH_STILL_H       still height  (default 1296)
+    PHOTOBOOTH_REMOVE_BG     "1"/"0" — run rembg on captures (default 1)
+    PHOTOBOOTH_REMBG_MODEL   rembg model name (default "u2netp" — small/fast)
 """
 
 from __future__ import annotations
 
 import io
+import json
 import os
+import random
 import subprocess
 import tempfile
 import threading
@@ -40,7 +53,7 @@ from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageOps
 
 try:
     from picamera2 import Picamera2
@@ -78,6 +91,15 @@ STILL_H = int(os.environ.get("PHOTOBOOTH_STILL_H", "1296"))
 PRINTER = os.environ.get("PHOTOBOOTH_PRINTER")
 REMOVE_BG = os.environ.get("PHOTOBOOTH_REMOVE_BG", "1") not in ("0", "false", "False", "")
 REMBG_MODEL = os.environ.get("PHOTOBOOTH_REMBG_MODEL", "u2netp")
+# escpos = direct USB ESC/POS (default, what every POS system uses).
+# cups   = the old `lp` subprocess path. Only useful as a fallback.
+PRINT_METHOD = os.environ.get("PHOTOBOOTH_PRINT_METHOD", "escpos")
+PRINTER_VID = int(os.environ.get("PHOTOBOOTH_PRINTER_VID", "0x0fe6"), 16)
+PRINTER_PID = int(os.environ.get("PHOTOBOOTH_PRINTER_PID", "0x811e"), 16)
+PRINTER_FEED_LINES = int(os.environ.get("PHOTOBOOTH_PRINTER_FEED", "6"))
+# Print head width in dots. Standard for 58mm thermals is 384 dots
+# (203 DPI × 48mm). Bump to 576 for 80mm printers.
+PRINTER_HEAD_DOTS = int(os.environ.get("PHOTOBOOTH_PRINTER_HEAD_DOTS", "384"))
 # CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
 # longest predefined "continuous roll" entry — 48mm fixed width, up to
 # 3276mm of feed. The printer only feeds enough paper for the actual
@@ -266,147 +288,122 @@ def capture():
     )
 
 
-@app.route("/print", methods=["POST"])
-def print_image():
-    """Receive a composed image and send it to the local CUPS printer.
+CHARS_PER_LINE = 32  # 58mm thermal at default font A (12 dots/char × 32 = 384)
 
-    Body: raw image bytes (image/png or image/jpeg). We do not parse multipart
-    here — the client posts a Blob directly.
+
+def _format_two_column(label: str, value: str, width: int = CHARS_PER_LINE) -> str:
+    """Format a label/value pair as a fixed-width row: label flush left,
+    value flush right, spaces in between. The printer's built-in font is
+    monospace so column alignment is perfect."""
+    space = max(1, width - len(label) - len(value))
+    return f"{label}{' ' * space}{value}"
+
+
+def _prep_photo_for_thermal(img: Image.Image) -> Image.Image:
+    """Convert a captured photo into a 1-bit bitmap that prints cleanly on
+    thermal paper: grayscale, autocontrast for punch, gamma-lift mid-tones
+    so dark areas don't crush to solid black, then Floyd–Steinberg dither
+    to 1-bit. Resized to the print head's exact dot count (no driver-side
+    scaling). All the heavy lifting that used to live in receiptCanvas.ts
+    on the browser, done server-side now."""
+    if img.mode != "L":
+        img = img.convert("L")
+    img = ImageOps.autocontrast(img, cutoff=2)
+    # Gamma curve (mid-tone lift) — same idea as the old photoGamma knob
+    # in photoboothConfig. 1.5 is a moderate one-stop lift.
+    lut = [int(255 * ((i / 255) ** (1 / 1.5))) for i in range(256)]
+    img = img.point(lut)
+    # Resize to exactly the print head width before dithering so the
+    # 1-bit pattern lands on real printer pixels.
+    if img.width != PRINTER_HEAD_DOTS:
+        ratio = PRINTER_HEAD_DOTS / img.width
+        new_h = max(1, int(round(img.height * ratio)))
+        img = img.resize((PRINTER_HEAD_DOTS, new_h), Image.LANCZOS)
+    return img.convert("1", dither=Image.FLOYDSTEINBERG)
+
+
+def _print_receipt_escpos(
+    photo: Optional[Image.Image],
+    brand: str,
+    lines: list,
+    feed_lines: int,
+) -> None:
+    """Compose and emit the receipt using native ESC/POS commands.
+
+    Each section is a real printer instruction, not a rasterized bitmap:
+      - brand wordmark uses the printer's built-in font at 2x size
+      - photo is the only bitmap (sized to the head width, dithered)
+      - body rows print as native text with monospace column alignment
+      - line feeds and final paper feed are explicit \n bytes
+
+    Result is sub-second printing with the printer's own crisp font and
+    perfect alignment, with zero CUPS/driver involvement.
     """
-    data = request.get_data()
-    if not data:
-        return jsonify(ok=False, error="empty body"), 400
+    from escpos.printer import Usb
 
-    ctype = request.headers.get("Content-Type", "image/png")
-    suffix = ".png" if "png" in ctype else ".jpg"
-
-    # Two preprocessing steps before handing off to CUPS:
-    #   1. Flatten any alpha channel onto white. Canvas-emitted PNGs are
-    #      RGBA; some image viewers and CUPS image filters render
-    #      transparent pixels as black, which makes a "fully opaque" canvas
-    #      appear to be a black rectangle and produces broken prints.
-    #   2. Stamp 203 DPI metadata so the CUPS image filter computes the
-    #      bitmap's natural size against the printer's actual head
-    #      resolution — without this, default 72 DPI math under-renders
-    #      the image to roughly a quarter of the paper width.
-    img_w = 0
-    img_h = 0
+    printer = Usb(PRINTER_VID, PRINTER_PID, profile="default")
     try:
-        img_meta = Image.open(io.BytesIO(data))
-        img_w, img_h = img_meta.size
-        if img_meta.mode in ("RGBA", "LA"):
-            flat = Image.new("RGB", img_meta.size, (255, 255, 255))
-            flat.paste(img_meta, mask=img_meta.split()[-1])
-            img_meta = flat
-        elif img_meta.mode != "RGB":
-            img_meta = img_meta.convert("RGB")
-        stamped = io.BytesIO()
-        img_meta.save(stamped, format="PNG", dpi=(203, 203))
-        data = stamped.getvalue()
-        # Force the on-disk filename to match what we actually wrote.
-        suffix = ".png"
-        ctype = "image/png"
-        print(
-            f"[print] received {img_w}x{img_h}px (flattened to RGB, "
-            f"stamped 203dpi, {len(data)} bytes)",
-            flush=True,
-        )
-    except Exception as exc:
-        print(f"[print] could not preprocess image: {exc}", flush=True)
+        # Header — centered double-size brand wordmark.
+        printer.set(align="center", double_height=True, double_width=True)
+        printer.text(brand + "\n")
+        printer.set(align="center")
+        printer.text(("-" * CHARS_PER_LINE) + "\n")
 
-    # Pad the PNG horizontally so its width matches the physical paper
-    # width — the side padding falls into the printer's hardware
-    # unprintable margins, leaving content centered on the printable
-    # zone instead of getting clipped on the left. This MUST happen
-    # before the tempfile is written, or lp ends up printing the
-    # un-padded image while being told the page is 58mm wide — a
-    # width mismatch that the driver "fixes" by overflowing to a
-    # phantom second column. (How we ended up with split prints.)
-    w_mm = request.args.get("w_mm", type=float)
-    h_mm = request.args.get("h_mm", type=float)
-    page_w_mm = w_mm
-    if w_mm and h_mm and img_w and img_h:
+        # Photo (only bitmap on the receipt).
+        if photo is not None:
+            printer.image(photo, impl="bitImageRaster")
+
+        printer.text(("-" * CHARS_PER_LINE) + "\n")
+
+        # Body rows — strings render full-width centered, [label, value]
+        # tuples render as a two-column row, null is a blank-line spacer.
+        printer.set(align="left")
+        for line in lines:
+            if line is None:
+                printer.text("\n")
+            elif isinstance(line, list) and len(line) == 2:
+                printer.text(_format_two_column(line[0], line[1]) + "\n")
+            else:
+                printer.text(str(line) + "\n")
+
+        # Auto-generated date + ticket number, formatted as table rows.
+        printer.text("\n")
+        date_str = time.strftime("%Y-%m-%d %H:%M") + " UTC"
+        ticket_str = f"#{random.randint(1000, 9999)}"
+        printer.text(_format_two_column("DATE", date_str) + "\n")
+        printer.text(_format_two_column("TICKET", ticket_str) + "\n")
+
+        # Feed past the tear bar.
+        for _ in range(feed_lines):
+            printer._raw(b"\n")
+    finally:
         try:
-            target_dpi = img_w / (w_mm / 25.4)
-            paper_width_px = int(PAPER_WIDTH_MM / 25.4 * target_dpi)
-            if paper_width_px > img_w:
-                side_pad = (paper_width_px - img_w) // 2
-                padded = Image.new("RGB", (paper_width_px, img_h), (255, 255, 255))
-                padded.paste(img_meta, (side_pad, 0))
-                img_meta = padded
-                img_w = paper_width_px
-                page_w_mm = PAPER_WIDTH_MM
-                # Re-emit the PNG bytes from the now-padded image so the
-                # tempfile + mirror + PDF all share the centered version.
-                buf = io.BytesIO()
-                img_meta.save(buf, format="PNG", dpi=(203, 203))
-                data = buf.getvalue()
-            print(
-                f"[print] padded to {img_w}px wide ({page_w_mm:g}mm), "
-                f"content centered",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[print] could not pad image: {exc}", flush=True)
+            printer.close()
+        except Exception:
+            pass
 
-    # Now write the tempfile with the FINAL padded bytes that lp will read.
+
+def _print_via_cups(
+    data: bytes,
+    suffix: str,
+    img_meta: Optional[Image.Image],
+    img_w: int,
+    img_h: int,
+    w_mm: Optional[float],
+    h_mm: Optional[float],
+) -> tuple[bool, str]:
+    """Old CUPS `lp` path — kept as a fallback. Returns (ok, message)."""
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as fh:
         fh.write(data)
         path = fh.name
 
-    # Optionally convert to PDF if cups-filters is installed (provides
-    # `pdftoraster`). Without that filter, `lp` passes raw PDF bytes to
-    # the printer which prints garbage — so PDF is opt-in via env var.
-    print_path = path
-    pdf_path: Optional[str] = None
-    if USE_PDF and w_mm and h_mm and img_w and img_h:
-        try:
-            pdf_path = path.replace(suffix, ".pdf")
-            target_dpi = img_w / (page_w_mm / 25.4)
-            img_meta.save(pdf_path, format="PDF", resolution=target_dpi)
-            print_path = pdf_path
-            print(
-                f"[print] converted to PDF ({page_w_mm:g}x{h_mm:g}mm @ "
-                f"{target_dpi:.1f}dpi): {pdf_path}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[print] PDF conversion failed, using PNG: {exc}", flush=True)
-
-    # Mirror the file we're handing CUPS to a human-readable location so
-    # the dev can open it and verify what we asked the printer to render.
-    # Save BOTH the PDF (what's actually being printed) and the PNG (easier
-    # to view in image viewers) when possible.
-    if PRINT_SAVE_DIR:
-        try:
-            os.makedirs(PRINT_SAVE_DIR, exist_ok=True)
-            ts = time.strftime("%Y%m%d-%H%M%S")
-            png_mirror = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}.png")
-            with open(png_mirror, "wb") as fh:
-                fh.write(data)
-            print(f"[print] saved PNG copy to {png_mirror}", flush=True)
-            if pdf_path and os.path.exists(pdf_path):
-                pdf_mirror = os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}.pdf")
-                with open(pdf_mirror, "wb") as fh:
-                    with open(pdf_path, "rb") as src:
-                        fh.write(src.read())
-                print(f"[print] saved PDF copy to {pdf_mirror}", flush=True)
-        except Exception as exc:
-            print(f"[print] could not save copy: {exc}", flush=True)
-
     cmd = ["lp"]
     if PRINTER:
         cmd += ["-d", PRINTER]
-
-    # Page width here MUST match the actual width of the file we're
-    # sending. After padding above, `page_w_mm` is the paper width
-    # (58mm) when padding kicked in, otherwise the original client-
-    # supplied width. Mismatching this with the on-disk image width is
-    # what produced the split-into-two-columns prints.
-    if page_w_mm and h_mm:
+    if w_mm and h_mm:
         cmd += [
-            "-o", f"PageSize=Custom.{page_w_mm:g}x{h_mm:g}mm",
-            "-o", f"media=Custom.{page_w_mm:g}x{h_mm:g}mm",
+            "-o", f"PageSize=Custom.{w_mm:g}x{h_mm:g}mm",
+            "-o", f"media=Custom.{w_mm:g}x{h_mm:g}mm",
         ]
     else:
         cmd += ["-o", f"PageSize={PRINT_PAGESIZE}"]
@@ -414,23 +411,115 @@ def print_image():
         "-o", "ppi=203",
         "-o", "natural-scaling=100",
         "-o", "fitplot=false",
-        print_path,
+        path,
     ]
-
-    print(f"[print] {' '.join(cmd)}", flush=True)
-
+    print(f"[print] (cups) {' '.join(cmd)}", flush=True)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
-        return jsonify(ok=False, error="lp timed out"), 504
-
+        return False, "lp timed out"
     if result.returncode != 0:
-        return (
-            jsonify(ok=False, error=result.stderr.strip() or "lp failed", cmd=" ".join(cmd)),
-            500,
+        return False, result.stderr.strip() or "lp failed"
+    return True, result.stdout.strip()
+
+
+@app.route("/print", methods=["POST"])
+def print_image():
+    """Compose a thermal receipt and print it via direct ESC/POS.
+
+    Two request shapes accepted:
+
+      multipart/form-data (preferred, the new path):
+        - photo:   image/jpeg|png  — the captured photo
+        - brand:   string           — wordmark text
+        - lines:   JSON string      — array of strings, [label,value], null
+        - feed_lines: int           — blank line feeds at end (tear margin)
+
+      raw bytes (legacy, the canvas-bitmap path):
+        - body is image bytes; we just print them as a single bitmap.
+
+    The new path renders text using the printer's built-in font (crisp,
+    fast, perfect alignment) and uses the photo as the only bitmap. The
+    legacy path is kept so a browser still sending a composed canvas
+    PNG continues to work.
+    """
+    photo_img: Optional[Image.Image] = None
+    brand = "groupdynamics.net"
+    lines: list = []
+    feed_lines = PRINTER_FEED_LINES
+
+    if "photo" in request.files:
+        # New native path.
+        try:
+            photo_img = Image.open(request.files["photo"].stream)
+            photo_img = _prep_photo_for_thermal(photo_img)
+        except Exception as exc:
+            return jsonify(ok=False, error=f"photo decode failed: {exc}"), 400
+        brand = request.form.get("brand", brand).strip() or brand
+        try:
+            lines = json.loads(request.form.get("lines", "[]"))
+        except Exception:
+            lines = []
+        try:
+            feed_lines = int(request.form.get("feed_lines", PRINTER_FEED_LINES))
+        except ValueError:
+            feed_lines = PRINTER_FEED_LINES
+
+        print(
+            f"[print] native ESC/POS — brand={brand!r}, "
+            f"{len(lines)} body lines, photo={photo_img.size}",
+            flush=True,
         )
 
-    return jsonify(ok=True, job=result.stdout.strip(), file=path, cmd=" ".join(cmd))
+        if PRINT_SAVE_DIR and photo_img is not None:
+            try:
+                os.makedirs(PRINT_SAVE_DIR, exist_ok=True)
+                ts = time.strftime("%Y%m%d-%H%M%S")
+                photo_img.save(os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}-photo.png"))
+                with open(os.path.join(PRINT_SAVE_DIR, f"receipt-{ts}-meta.txt"), "w") as fh:
+                    fh.write(f"brand: {brand}\nlines:\n")
+                    for ln in lines:
+                        fh.write(f"  {ln}\n")
+                    fh.write(f"feed_lines: {feed_lines}\n")
+            except Exception as exc:
+                print(f"[print] could not save mirror: {exc}", flush=True)
+
+        try:
+            _print_receipt_escpos(photo_img, brand, lines, feed_lines)
+            print("[print] done", flush=True)
+            return jsonify(ok=True, method="escpos-native")
+        except Exception as exc:
+            print(f"[print] FAILED: {exc}", flush=True)
+            return jsonify(ok=False, method="escpos-native", error=str(exc)), 500
+
+    # Legacy path: raw image bytes, print as single bitmap.
+    data = request.get_data()
+    if not data:
+        return jsonify(ok=False, error="empty body — expected multipart photo"), 400
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.mode in ("RGBA", "LA"):
+            flat = Image.new("RGB", img.size, (255, 255, 255))
+            flat.paste(img, mask=img.split()[-1])
+            img = flat
+        photo = _prep_photo_for_thermal(img)
+    except Exception as exc:
+        return jsonify(ok=False, error=f"image decode failed: {exc}"), 400
+    try:
+        from escpos.printer import Usb
+        printer = Usb(PRINTER_VID, PRINTER_PID, profile="default")
+        try:
+            printer.image(photo, impl="bitImageRaster")
+            for _ in range(PRINTER_FEED_LINES):
+                printer._raw(b"\n")
+        finally:
+            try:
+                printer.close()
+            except Exception:
+                pass
+        return jsonify(ok=True, method="escpos-bitmap")
+    except Exception as exc:
+        return jsonify(ok=False, method="escpos-bitmap", error=str(exc)), 500
 
 
 # ---------- entrypoint --------------------------------------------------------

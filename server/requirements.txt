@@ -11,3 +11,10 @@ rembg>=2.0
 onnxruntime>=1.17
 pillow>=10.0
 numpy>=1.26
+
+# Direct USB ESC/POS — talks to thermal printers natively without going
+# through CUPS. This is how every production POS system works.
+# python-escpos depends on pyusb which depends on libusb; install the
+# system library first: sudo apt install -y libusb-1.0-0
+python-escpos>=3.0
+pyusb>=1.2

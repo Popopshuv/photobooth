@@ -22,75 +22,21 @@ export const streamUrl = () => `${getPiBaseUrl()}/stream`;
 export const captureUrl = () => `${getPiBaseUrl()}/capture`;
 export const printUrl = () => `${getPiBaseUrl()}/print`;
 
-/** Receipt copy + print geometry. Adjust per shoot. */
+/**
+ * Receipt copy. The browser POSTs `brand`, `lines`, and `feedLines` to
+ * the Pi server, which composes the receipt using the printer's native
+ * ESC/POS commands — no canvas, no DPI, no CUPS. Photo printing happens
+ * server-side too. Edit the strings below to change what prints.
+ */
 export const RECEIPT = {
   brand: "groupdynamics.net",
   /**
-   * Output canvas width in CSS pixels. The receipt scales proportionally
-   * from this. Bump up for larger paper, down for narrow label/thermal stock.
-   */
-  widthPx: 800,
-  /**
-   * Side padding as a fraction of width — used by the photo and rules.
-   * Thermal printers have ~0 unprintable margin (the head spans the full
-   * paper width), so this is purely visual breathing room, not a clip
-   * safety zone. Bump up if switching back to a label/inkjet printer.
-   */
-  padPct: 0.04,
-  /**
-   * Padding for text (brand wordmark + body lines). Matches `padPct` so
-   * the wordmark and receipt copy line up flush with the left edge of
-   * the photo above them — no double-indent.
-   */
-  textPadPct: 0.04,
-  /**
-   * Physical PRINTABLE width in millimeters — i.e. the width of the print
-   * head, not the paper. 58mm thermal printers carry 58mm-wide paper but
-   * have a 48mm-wide print head (384 dots at 8 dots/mm). Anything wider
-   * than the head's 48mm gets clipped or scaled by the driver. Setting
-   * this to the printable width keeps every mm-based knob accurate.
-   */
-  printWidthMm: 48,
-  /**
-   * Native print resolution in dots-per-millimeter. Most 58mm/80mm thermal
-   * heads are 203 DPI ≈ 8 dots/mm. Used to size the composed canvas to the
-   * printer's native pixel grid so what you see in the preview is what
-   * gets printed (no resampling step inside CUPS).
-   */
-  printDotsPerMm: 8,
-  /**
-   * Extra blank paper appended below the last printed row, in millimeters.
-   * Thermal printers without an auto-cutter park the last printed line a
-   * few cm down inside the body — without this, you have to manually feed
-   * paper out before tearing or the content gets sliced off. Bump if your
-   * tear bar is further above the print head; drop to save paper.
-   */
-  tearOffMm: 50,
-  /**
-   * Visible gap between body rows on the printed page, in millimeters.
-   * Independent of font size so spacing reads consistently regardless
-   * of text scale tweaks.
-   */
-  bodyGapMm: 7,
-  /**
-   * Vertical breathing room (mm) above AND below the photo. Adds whitespace
-   * between the header rule and the photo, and the photo and the body rule.
-   */
-  photoMarginMm: 8,
-  /**
-   * Gamma applied to the captured photo before composing onto the receipt.
-   * Thermal printers threshold at ~50% gray, so anything mid-tone or darker
-   * collapses to pure black on print — a normal portrait turns into a
-   * silhouette. Values >1 lift mid-tones and shadows. 1.8 ≈ "lift one stop";
-   * push to 2.2 if the print is still mostly black, drop to 1.4 if highlights
-   * are blowing out.
-   */
-  photoGamma: 1.8,
-  /**
-   * Lines in the receipt body. Strings render full-width; tuples render as
-   * a real two-column table (label flush left, value flush right) so the
-   * layout doesn't depend on monospace dot-leaders, which the thermal
-   * head can drop. `null` is a blank-line spacer.
+   * Lines in the receipt body, in print order.
+   *   - `string`              → renders full-width
+   *   - `[label, value]`      → renders as a two-column row (label left,
+   *                             value right) using monospace alignment
+   *   - `null`                → blank-line spacer
+   * The server auto-appends `DATE` and `TICKET` rows at the end.
    */
   lines: [
     "GROUP DYNAMICS",
@@ -102,4 +48,10 @@ export const RECEIPT = {
     null,
     "THANK YOU FOR SITTING.",
   ] as ReadonlyArray<string | null | readonly [string, string]>,
+  /**
+   * Blank line feeds added after the last printed row so the receipt
+   * clears the manual tear bar. Thermal printers without auto-cutters
+   * park the last line down inside the body — feed past it.
+   */
+  feedLines: 6,
 } as const;

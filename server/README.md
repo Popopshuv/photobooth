@@ -10,32 +10,58 @@ attached printer to the photobooth web app over HTTP.
 | `GET /health`   | Sanity check — returns config and current printer.                    |
 | `GET /stream`   | Multipart MJPEG stream. Drop straight into `<img src="…/stream">`.    |
 | `GET /capture`  | A single JPEG still — background removed (rembg) and flattened white. |
-| `POST /print`   | Body = image bytes (`image/png` or `image/jpeg`). Sends to CUPS.      |
+| `POST /print`   | Body = image bytes. Default path: ESC/POS direct over USB.            |
+
+## How printing works
+
+The default `POST /print` path **does not use CUPS**. It opens the thermal
+printer as a USB device via `python-escpos` and sends ESC/POS raster
+bitmap commands directly — same protocol every retail POS system uses.
+This sidesteps every CUPS/driver quirk we used to fight (fit-to-page,
+fit-to-page-into-a-label-size, missing pdftoraster, RGBA-as-black, etc).
+
+CUPS remains as a fallback. Switch with `PHOTOBOOTH_PRINT_METHOD=cups`
+if direct USB doesn't work for some reason.
 
 ## One-time Pi setup
 
 ```bash
 # Camera stack (apt only — picamera2 is NOT on PyPI)
 sudo apt update
-sudo apt install -y python3-picamera2 python3-libcamera python3-pip cups
+sudo apt install -y python3-picamera2 python3-libcamera python3-pip \
+                    libusb-1.0-0 cups
 
-# Add yourself to the `lp` group so `lp` works without sudo
+# Find your thermal printer's USB IDs:
+lsusb
+# Look for your printer in the list — line looks like:
+#   Bus 001 Device 003: ID 0fe6:811e Kingsing
+# Copy the "0fe6:811e" part — first half is VID, second half is PID.
+
+# Allow non-root access to the printer's USB device. Replace 0fe6/811e
+# with YOUR ids from lsusb:
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="0fe6", ATTRS{idProduct}=="811e", MODE="0666"' | \
+    sudo tee /etc/udev/rules.d/99-thermal-printer.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+# Unplug + replug the printer to apply the new permissions.
+
+# Tell the server about the IDs (or set them in the systemd unit):
+export PHOTOBOOTH_PRINTER_VID=0x0fe6
+export PHOTOBOOTH_PRINTER_PID=0x811e
+```
+
+> The CUPS setup below is **only needed if you want the CUPS fallback**.
+> The default path doesn't touch CUPS at all.
+
+```bash
+# (Optional, for CUPS fallback only)
+sudo apt install -y cups cups-filters
 sudo usermod -a -G lp $USER
-
 # Plug the printer in, then in a browser hit http://<pi-ip>:631
 # (CUPS web UI) to add it. Confirm with:
 lpstat -p
-lp /etc/hostname        # smoke test — should print one page
-
-# Make this printer the system default so the server can stay generic
-# (no PHOTOBOOTH_PRINTER env var needed). Replace QUEUE_NAME with the
-# name shown by `lpstat -p` (e.g. ZJ-58, POS58, etc):
-sudo lpadmin -d QUEUE_NAME
-lpstat -d                # should print "system default destination: QUEUE_NAME"
+sudo lpadmin -d QUEUE_NAME      # set system default
 ```
-
-> Once a CUPS default is set the systemd unit's `Environment=PHOTOBOOTH_PRINTER=…`
-> line is unnecessary — `lp` (no `-d`) routes to the default queue.
 
 ## Run the server
 
