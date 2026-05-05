@@ -52,7 +52,7 @@ from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 try:
     from picamera2 import Picamera2
@@ -99,6 +99,11 @@ PRINTER_FEED_LINES = int(os.environ.get("PHOTOBOOTH_PRINTER_FEED", "6"))
 # Print head width in dots. Standard for 58mm thermals is 384 dots
 # (203 DPI × 48mm). Bump to 576 for 80mm printers.
 PRINTER_HEAD_DOTS = int(os.environ.get("PHOTOBOOTH_PRINTER_HEAD_DOTS", "384"))
+# Font sizes (in pixels at 203 DPI). Tune these for receipt text size.
+# 17 dots ≈ Font B native size; we render with TrueType so we can go
+# smaller than that. Defaults aim for "compact" — bump up to taste.
+BRAND_FONT_PX = int(os.environ.get("PHOTOBOOTH_BRAND_FONT_PX", "12"))
+BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "10"))
 # CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
 # longest predefined "continuous roll" entry — 48mm fixed width, up to
 # 3276mm of feed. The printer only feeds enough paper for the actual
@@ -287,15 +292,94 @@ def capture():
     )
 
 
-CHARS_PER_LINE = 42  # 58mm thermal at font B (9 dots/char × 42 ≈ 378)
+# ---------- bitmap text rendering --------------------------------------------
+# Below the printer's native Font B size we have to render text ourselves as
+# a 1-bit bitmap and send it via the same image command the photo uses.
+
+_FONT_CACHE: dict[int, ImageFont.FreeTypeFont] = {}
 
 
-def _format_two_column(label: str, value: str, width: int = CHARS_PER_LINE) -> str:
-    """Format a label/value pair as a fixed-width row: label flush left,
-    value flush right, spaces in between. The printer's built-in font is
-    monospace so column alignment is perfect."""
-    space = max(1, width - len(label) - len(value))
-    return f"{label}{' ' * space}{value}"
+def _load_mono_font(size: int) -> ImageFont.FreeTypeFont:
+    """Find a system monospace TrueType font and load it at the requested
+    pixel size. Cached per-size so we don't reopen the .ttf on every print."""
+    if size in _FONT_CACHE:
+        return _FONT_CACHE[size]
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+        "/Library/Fonts/Menlo.ttc",  # macOS dev fallback
+        "/System/Library/Fonts/Menlo.ttc",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                font = ImageFont.truetype(path, size)
+                _FONT_CACHE[size] = font
+                return font
+            except Exception:
+                continue
+    return ImageFont.load_default()  # tiny built-in bitmap font
+
+
+def _render_lines_to_bitmap(
+    lines: list,
+    width_dots: int,
+    font_size: int,
+    align: str = "left",
+) -> Image.Image:
+    """Render a list of receipt rows as a 1-bit bitmap (black on white).
+
+    Each item:
+      - str             — single full-width line
+      - [label, value]  — two-column row (label flush left, value flush right)
+      - None            — half-height blank-line spacer
+
+    Everything is lowercased at render time. align controls plain string
+    alignment ("left" | "center"); two-column rows always do label-left,
+    value-right.
+    """
+    font = _load_mono_font(font_size)
+    bbox = font.getbbox("Mg")
+    line_h = bbox[3] - bbox[1] + max(2, font_size // 4)
+
+    total_h = 0
+    for line in lines:
+        if line is None:
+            total_h += line_h // 2
+        else:
+            total_h += line_h
+    total_h = max(total_h, line_h)
+
+    img = Image.new("L", (width_dots, total_h), 255)
+    draw = ImageDraw.Draw(img)
+    # Disable PIL's text anti-aliasing — we render to a 1-bit thermal head
+    # and AA fringes look like dot noise once thresholded.
+    draw.fontmode = "1"
+
+    y = 0
+    for line in lines:
+        if line is None:
+            y += line_h // 2
+            continue
+        if isinstance(line, (list, tuple)) and len(line) == 2:
+            label = str(line[0]).lower()
+            value = str(line[1]).lower()
+            draw.text((0, y), label, fill=0, font=font)
+            vbox = draw.textbbox((0, 0), value, font=font)
+            value_w = vbox[2] - vbox[0]
+            draw.text((width_dots - value_w, y), value, fill=0, font=font)
+        else:
+            text = str(line).lower()
+            if align == "center":
+                tbox = draw.textbbox((0, 0), text, font=font)
+                tw = tbox[2] - tbox[0]
+                draw.text(((width_dots - tw) // 2, y), text, fill=0, font=font)
+            else:
+                draw.text((0, y), text, fill=0, font=font)
+        y += line_h
+
+    return img.convert("1", dither=Image.NONE)
 
 
 def _prep_photo_for_thermal(img: Image.Image) -> Image.Image:
@@ -342,37 +426,41 @@ def _print_receipt_escpos(
 
     printer = Usb(PRINTER_VID, PRINTER_PID, profile="default")
     try:
-        # Whole receipt prints in font B — smaller / denser than font A.
-        # Brand renders centered + bold for emphasis, body left-aligned.
-        printer.set(font="b", align="center", bold=True)
-        printer.text(brand + "\n")
-        printer.set(font="b", align="center", bold=False)
-        printer.text("\n")
+        # Brand wordmark — rendered as a small bitmap so we can use any
+        # font size below the printer's native Font B floor. No bold,
+        # lowercased.
+        brand_img = _render_lines_to_bitmap(
+            [brand],
+            width_dots=PRINTER_HEAD_DOTS,
+            font_size=BRAND_FONT_PX,
+            align="center",
+        )
+        printer.image(brand_img, impl="bitImageRaster")
+        printer._raw(b"\n")
 
-        # Photo (only bitmap on the receipt). No dashed rules above/below
-        # — the wordmark + blank lines above and the body below give it
-        # enough visual separation on their own.
+        # Photo (the only "real" bitmap — already prepped: grayscale,
+        # gamma-lifted, dithered, sized to the print head).
         if photo is not None:
             printer.image(photo, impl="bitImageRaster")
-        printer.text("\n")
+        printer._raw(b"\n")
 
-        # Body rows — strings render full-width, [label, value] tuples
-        # render as a two-column row, null is a blank-line spacer.
-        printer.set(font="b", align="left")
-        for line in lines:
-            if line is None:
-                printer.text("\n")
-            elif isinstance(line, list) and len(line) == 2:
-                printer.text(_format_two_column(line[0], line[1]) + "\n")
-            else:
-                printer.text(str(line) + "\n")
-
-        # Auto-generated date + ticket number, formatted as table rows.
-        printer.text("\n")
+        # Body — assemble the full row list (config lines + auto-added
+        # DATE + TICKET) and render as a single bitmap. Every string is
+        # lowercased inside the render helper.
+        body_rows: list = list(lines)
+        body_rows.append(None)
         date_str = time.strftime("%Y-%m-%d %H:%M") + " UTC"
         ticket_str = f"#{random.randint(1000, 9999)}"
-        printer.text(_format_two_column("DATE", date_str) + "\n")
-        printer.text(_format_two_column("TICKET", ticket_str) + "\n")
+        body_rows.append(["DATE", date_str])
+        body_rows.append(["TICKET", ticket_str])
+
+        body_img = _render_lines_to_bitmap(
+            body_rows,
+            width_dots=PRINTER_HEAD_DOTS,
+            font_size=BODY_FONT_PX,
+            align="left",
+        )
+        printer.image(body_img, impl="bitImageRaster")
 
         # Feed past the tear bar.
         for _ in range(feed_lines):
