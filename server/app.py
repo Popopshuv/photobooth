@@ -52,7 +52,7 @@ from typing import Optional
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 try:
     from picamera2 import Picamera2
@@ -104,6 +104,17 @@ PRINTER_HEAD_DOTS = int(os.environ.get("PHOTOBOOTH_PRINTER_HEAD_DOTS", "384"))
 # smaller than that. Defaults aim for "compact" — bump up to taste.
 BRAND_FONT_PX = int(os.environ.get("PHOTOBOOTH_BRAND_FONT_PX", "13"))
 BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "13"))
+# Photo tone-mapping knobs. Thermal printers threshold at ~50% gray, so a
+# normal-exposure photo of a dark-haired person collapses to a black blob
+# unless we lift mid-tones aggressively before dithering.
+#   brightness > 1: push everything brighter (1.0 = unchanged)
+#   gamma     > 1: lift mid-tones harder than highlights/shadows
+#   sharpness > 1: preserve facial features through 1-bit threshold
+#   contrast  < 1: keep blacks from clipping back down after lift
+PHOTO_BRIGHTNESS = float(os.environ.get("PHOTOBOOTH_PHOTO_BRIGHTNESS", "1.4"))
+PHOTO_GAMMA = float(os.environ.get("PHOTOBOOTH_PHOTO_GAMMA", "2.4"))
+PHOTO_SHARPNESS = float(os.environ.get("PHOTOBOOTH_PHOTO_SHARPNESS", "2.0"))
+PHOTO_CONTRAST = float(os.environ.get("PHOTOBOOTH_PHOTO_CONTRAST", "0.9"))
 # CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
 # longest predefined "continuous roll" entry — 48mm fixed width, up to
 # 3276mm of feed. The printer only feeds enough paper for the actual
@@ -383,21 +394,33 @@ def _render_lines_to_bitmap(
 
 
 def _prep_photo_for_thermal(img: Image.Image) -> Image.Image:
-    """Convert a captured photo into a 1-bit bitmap that prints cleanly on
-    thermal paper: grayscale, autocontrast for punch, gamma-lift mid-tones
-    so dark areas don't crush to solid black, then Floyd–Steinberg dither
-    to 1-bit. Resized to the print head's exact dot count (no driver-side
-    scaling). All the heavy lifting that used to live in receiptCanvas.ts
-    on the browser, done server-side now."""
+    """Convert a captured photo into a 1-bit bitmap that prints with as
+    much detail as a 1-bit thermal head can carry.
+
+    Pipeline (each step is tunable via env var):
+      1. Grayscale.
+      2. Brightness boost — push the whole histogram brighter so the
+         person isn't sitting near the dither's threshold.
+      3. Sharpness — emphasizes edges so facial features survive the
+         1-bit threshold instead of melting into a black blob.
+      4. Contrast pull-back — keep blacks from re-clipping after the
+         brightness lift; counter-intuitive but it preserves detail.
+      5. Gamma curve — lifts mid-tones harder than highlights or
+         shadows. This is the heavy lifter for "make hair/clothing
+         show texture instead of pure black."
+      6. Resize to printer head width (1:1 dot mapping).
+      7. Floyd–Steinberg dither to 1-bit.
+    """
     if img.mode != "L":
         img = img.convert("L")
-    img = ImageOps.autocontrast(img, cutoff=2)
-    # Gamma curve (mid-tone lift) — same idea as the old photoGamma knob
-    # in photoboothConfig. 1.5 is a moderate one-stop lift.
-    lut = [int(255 * ((i / 255) ** (1 / 1.5))) for i in range(256)]
+    img = ImageEnhance.Brightness(img).enhance(PHOTO_BRIGHTNESS)
+    img = ImageEnhance.Sharpness(img).enhance(PHOTO_SHARPNESS)
+    img = ImageEnhance.Contrast(img).enhance(PHOTO_CONTRAST)
+
+    inv = 1.0 / max(0.1, PHOTO_GAMMA)
+    lut = [min(255, int(255 * ((i / 255) ** inv))) for i in range(256)]
     img = img.point(lut)
-    # Resize to exactly the print head width before dithering so the
-    # 1-bit pattern lands on real printer pixels.
+
     if img.width != PRINTER_HEAD_DOTS:
         ratio = PRINTER_HEAD_DOTS / img.width
         new_h = max(1, int(round(img.height * ratio)))
