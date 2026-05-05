@@ -213,9 +213,12 @@ picam2 = Picamera2()
 # `capture_file` which gives us a still from the same configured sensor mode.
 video_config = picam2.create_video_configuration(
     main={"size": (STREAM_W, STREAM_H), "format": "RGB888"},
-    transform=Transform(hflip=HFLIP, vflip=VFLIP),
 )
 picam2.configure(video_config)
+# We don't apply Transform() at the camera here — some Pi sensor modules
+# silently ignore hflip in libcamera's ISP. Instead, the browser CSS
+# flips the live stream and `/capture` flips the still in PIL below, so
+# we control both sides regardless of camera capabilities.
 
 stream_output = StreamingOutput()
 picam2.start_recording(MJPEGEncoder(), FileOutput(stream_output))
@@ -284,6 +287,22 @@ def capture():
         buf = io.BytesIO()
         picam2.capture_file(buf, format="jpeg")
         data = buf.getvalue()
+
+    # Mirror the still so it matches what the user saw on the (CSS-flipped)
+    # live preview. Both transforms are gated by the same HFLIP/VFLIP env
+    # vars so the two views never disagree.
+    if HFLIP or VFLIP:
+        try:
+            img = Image.open(io.BytesIO(data))
+            if HFLIP:
+                img = ImageOps.mirror(img)
+            if VFLIP:
+                img = ImageOps.flip(img)
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=92)
+            data = out.getvalue()
+        except Exception as exc:
+            print(f"[capture] flip failed: {exc}", flush=True)
 
     if REMOVE_BG:
         t0 = time.monotonic()

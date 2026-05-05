@@ -70,6 +70,10 @@ export function Stage({ flash, onFlashDone }: StageProps) {
             width: "100%",
             height: "100%",
             objectFit: "cover",
+            // Mirror horizontally so the preview behaves like a mirror —
+            // raise your right hand, see it rise on the right side of the
+            // screen. Captured stills are mirrored server-side to match.
+            transform: "scaleX(-1)",
           }}
         />
       )}
