@@ -103,7 +103,7 @@ PRINTER_HEAD_DOTS = int(os.environ.get("PHOTOBOOTH_PRINTER_HEAD_DOTS", "384"))
 # 17 dots ≈ Font B native size; we render with TrueType so we can go
 # smaller than that. Defaults aim for "compact" — bump up to taste.
 BRAND_FONT_PX = int(os.environ.get("PHOTOBOOTH_BRAND_FONT_PX", "12"))
-BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "10"))
+BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "11"))
 # CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
 # longest predefined "continuous roll" entry — 48mm fixed width, up to
 # 3276mm of feed. The printer only feeds enough paper for the actual
@@ -428,12 +428,12 @@ def _print_receipt_escpos(
     try:
         # Brand wordmark — rendered as a small bitmap so we can use any
         # font size below the printer's native Font B floor. No bold,
-        # lowercased.
+        # lowercased, left-aligned to match the body block below.
         brand_img = _render_lines_to_bitmap(
             [brand],
             width_dots=PRINTER_HEAD_DOTS,
             font_size=BRAND_FONT_PX,
-            align="center",
+            align="left",
         )
         printer.image(brand_img, impl="bitImageRaster")
         printer._raw(b"\n")
