@@ -102,8 +102,8 @@ PRINTER_HEAD_DOTS = int(os.environ.get("PHOTOBOOTH_PRINTER_HEAD_DOTS", "384"))
 # Font sizes (in pixels at 203 DPI). Tune these for receipt text size.
 # 17 dots ≈ Font B native size; we render with TrueType so we can go
 # smaller than that. Defaults aim for "compact" — bump up to taste.
-BRAND_FONT_PX = int(os.environ.get("PHOTOBOOTH_BRAND_FONT_PX", "12"))
-BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "11"))
+BRAND_FONT_PX = int(os.environ.get("PHOTOBOOTH_BRAND_FONT_PX", "13"))
+BODY_FONT_PX = int(os.environ.get("PHOTOBOOTH_BODY_FONT_PX", "13"))
 # CUPS PageSize used for every print job. Default is the ZJ-58 PPD's
 # longest predefined "continuous roll" entry — 48mm fixed width, up to
 # 3276mm of feed. The printer only feeds enough paper for the actual
